@@ -1,0 +1,49 @@
+{
+  "name": "nearpay-app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@near-wallet-selector/core": "^10.1.4",
+    "@near-wallet-selector/meteor-wallet": "^10.1.4",
+    "@near-wallet-selector/modal-ui": "^10.1.4",
+    "@near-wallet-selector/my-near-wallet": "^10.1.4",
+    "@supabase/supabase-js": "^2.118.0",
+    "@zxing/browser": "^0.2.1",
+    "@zxing/library": "^0.23.0",
+    "buffer": "^6.0.3",
+    "lucide-react": "^1.65.0",
+    "near-api-js": "^7.4.0",
+    "next": "^15.5.28",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-qr-code": "^2.2.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.7",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@tailwindcss/turbopack": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10.6.2",
+    "eslint": "^9",
+    "eslint-config-next": "^15.5.28",
+    "postcss": "^8.5.32",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5"
+  },
+  "overrides": {
+    "postcss": "^8.5.32",
+    "decode-uri-component": "^0.5.1",
+    "nanoid": "5.1.16"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}

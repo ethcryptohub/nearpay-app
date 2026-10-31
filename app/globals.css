@@ -1,0 +1,41 @@
+@import "@near-wallet-selector/modal-ui/styles.css";
+@import "tailwindcss";
+@config "../tailwind.config.mjs";
+
+:root {
+  color-scheme: light;
+  --near-pay-ink: #111111;
+  --near-pay-paper: #f4f4f1;
+  --near-pay-accent: #047857;
+}
+
+html {
+  background: var(--near-pay-paper);
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--near-pay-paper);
+  color: var(--near-pay-ink);
+}
+
+::selection {
+  background: var(--near-pay-accent);
+  color: #ffffff;
+}
+
+:focus-visible {
+  outline: 2px solid var(--near-pay-accent);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
