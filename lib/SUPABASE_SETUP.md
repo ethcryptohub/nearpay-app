@@ -18,3 +18,9 @@ To enable cross-device merchant history:
 6. After a successful payment, the customer signs the receipt authorization. A merchant connects the configured wallet on the History page and selects **Sync shared history**.
 
 Shared payment records include customer name, email, and mobile number. Merchant history is returned only after a one-time wallet signature proves control of the merchant account. Customer profile editing remains local to the customer's browser; it is not a globally hosted profile.
+
+## Repair `wallet_challenges` permission errors
+
+If checkout reports `permission denied for table wallet_challenges`, open the project's Supabase **SQL Editor**, run [`supabase-permissions-fix.sql`](./supabase-permissions-fix.sql), and confirm its result columns are all `true`. This grants only the server-side `service_role` access; browser roles remain revoked by the main schema.
+
+If the permission check is all `true` but the live app still reports a permission error, verify in Vercel → **Project Settings → Environment Variables** that `SUPABASE_SERVICE_ROLE_KEY` is set for Production to the project's server-side `service_role` or secret API key—not the anon/publishable key. Do not reveal or paste the key anywhere. Redeploy after correcting it, then retry **Retry merchant history sync**. The failed sync did not invalidate the already-verified NEAR payment.

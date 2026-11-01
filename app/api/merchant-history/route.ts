@@ -4,7 +4,10 @@ import { isPaymentRecord, type PaymentRecord } from "../../../lib/payment-histor
 import {
   consumeAndVerifyWalletChallenge,
 } from "../../../lib/server-wallet-auth";
-import { getSupabaseAdmin } from "../../../lib/supabase-admin";
+import {
+  getSupabaseAdmin,
+  getSupabaseOperationError,
+} from "../../../lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
 
@@ -70,7 +73,10 @@ export async function POST(request: Request) {
       .order("date", { ascending: false })
       .limit(500);
     if (error) {
-      throw new Error(`Unable to load merchant history: ${error.message}`);
+      throw getSupabaseOperationError(
+        "Unable to load merchant history",
+        error,
+      );
     }
 
     const records = (data ?? [])

@@ -7,7 +7,10 @@ import {
   isReceiptDigest,
   isTransactionHash,
 } from "../../../lib/server-wallet-auth";
-import { getSupabaseAdmin } from "../../../lib/supabase-admin";
+import {
+  getSupabaseAdmin,
+  getSupabaseOperationError,
+} from "../../../lib/supabase-admin";
 import { isValidNearAccountId } from "../../../lib/merchant-settings";
 import {
   validateCustomerProfile,
@@ -211,7 +214,10 @@ export async function POST(request: Request) {
       .from("payment_records")
       .upsert(record, { onConflict: "transaction_hash" });
     if (error) {
-      throw new Error(`Unable to save verified payment: ${error.message}`);
+      throw getSupabaseOperationError(
+        "Unable to save verified payment",
+        error,
+      );
     }
 
     const responseRecord: PaymentRecord = {

@@ -41,5 +41,7 @@ alter table public.payment_records enable row level security;
 
 revoke all on public.wallet_challenges from anon, authenticated;
 revoke all on public.payment_records from anon, authenticated;
-grant all on public.wallet_challenges to service_role;
-grant all on public.payment_records to service_role;
+
+grant usage on schema public to service_role;
+grant select, insert, update, delete on public.wallet_challenges to service_role;
+grant select, insert, update, delete on public.payment_records to service_role;
