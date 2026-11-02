@@ -94,6 +94,11 @@ export default function ReceiptPage() {
               {record.merchantAccountId ? (
                 <p className="mt-2 break-all text-xs">{record.merchantAccountId}</p>
               ) : null}
+              {record.invoiceNumber ? (
+                <p className="mt-3 text-xs font-bold">
+                  Invoice No: {record.invoiceNumber}
+                </p>
+              ) : null}
               <p className="mt-3 text-xs">
                 {new Date(record.date).toLocaleString("en-IN", {
                   dateStyle: "medium",

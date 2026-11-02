@@ -277,6 +277,7 @@ function PaymentPortal() {
   const [profileError, setProfileError] = useState<string | null>(null);
   const [paymentState, setPaymentState] = useState<PaymentState>("pending");
   const [transactionHash, setTransactionHash] = useState("");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copyMessage, setCopyMessage] = useState("");
   const [historySaveError, setHistorySaveError] = useState<string | null>(null);
@@ -322,6 +323,7 @@ function PaymentPortal() {
     });
     setPaymentState("pending");
     setTransactionHash("");
+    setInvoiceNumber("");
     setErrorMessage(null);
     setHistorySaveError(null);
     setCopyMessage("");
@@ -333,6 +335,7 @@ function PaymentPortal() {
       setInvoice(decodedInvoice);
       setPaymentState("pending");
       setTransactionHash("");
+      setInvoiceNumber("");
       setErrorMessage(null);
       setHistorySaveError(null);
       setCopyMessage("");
@@ -620,6 +623,18 @@ function PaymentPortal() {
                 : "The merchant history server rejected the payment record.";
             throw new Error(apiMessage);
           }
+          if (
+            typeof persistResult !== "object" ||
+            persistResult === null ||
+            !("record" in persistResult) ||
+            typeof persistResult.record !== "object" ||
+            persistResult.record === null ||
+            !("invoiceNumber" in persistResult.record) ||
+            typeof persistResult.record.invoiceNumber !== "string"
+          ) {
+            throw new Error("The saved payment did not return an invoice number.");
+          }
+          setInvoiceNumber(persistResult.record.invoiceNumber);
           setHistorySaveError(null);
         } catch (error) {
           console.error(
@@ -808,6 +823,7 @@ function PaymentPortal() {
       setAccountId(null);
       setPaymentState("pending");
       setTransactionHash("");
+      setInvoiceNumber("");
       setHistorySaveError(null);
     } catch (error) {
       console.error("Unable to sign out of the customer NEAR wallet.", error);
@@ -1351,9 +1367,16 @@ function PaymentPortal() {
                 Payment confirmed; invoice could not be saved yet.
               </p>
             ) : (
-              <p className="mt-4 border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">
-                Invoice generated
-              </p>
+              <>
+                <p className="mt-4 border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">
+                  Invoice generated
+                </p>
+                {invoiceNumber ? (
+                  <p className="mt-3 border border-neutral-300 px-3 py-2 font-mono text-sm font-bold">
+                    Invoice No: {invoiceNumber}
+                  </p>
+                ) : null}
+              </>
             )}
             <p className="mt-6 text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
               Verified transaction hash

@@ -287,6 +287,11 @@ export default function HistoryPage() {
                         dateStyle: "medium",
                         timeStyle: "short",
                       })}
+                      {transaction.invoiceNumber ? (
+                        <p className="mt-2 font-mono text-[10px] font-bold text-neutral-500">
+                          {transaction.invoiceNumber}
+                        </p>
+                      ) : null}
                     </td>
                     <td className="px-4 py-5 text-sm">
                       <p className="font-semibold">{transaction.customerName ?? "Not provided"}</p>

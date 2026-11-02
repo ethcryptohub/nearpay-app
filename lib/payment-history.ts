@@ -20,9 +20,18 @@ export type PaymentRecord = {
   customerName?: string;
   customerEmail?: string;
   customerMobile?: string;
+  invoiceNumber?: string;
   transactionHash?: string;
   status: "Pending" | "Success" | "Failed";
 };
+
+export function formatInvoiceNumber(transactionId: string): string {
+  const normalizedId = transactionId.replace(/-/g, "");
+  if (!/^[\da-f]{32}$/i.test(normalizedId)) {
+    throw new Error("The transaction has an invalid invoice identifier.");
+  }
+  return `NP-${normalizedId.toUpperCase()}`;
+}
 
 export function isPaymentRecord(value: unknown): value is PaymentRecord {
   if (typeof value !== "object" || value === null) {
@@ -58,6 +67,9 @@ export function isPaymentRecord(value: unknown): value is PaymentRecord {
       typeof record.customerEmail === "string") &&
     (record.customerMobile === undefined ||
       typeof record.customerMobile === "string") &&
+    (record.invoiceNumber === undefined ||
+      (typeof record.invoiceNumber === "string" &&
+        record.invoiceNumber.length > 0)) &&
     (record.transactionHash === undefined ||
       typeof record.transactionHash === "string") &&
     (record.status === "Pending" ||

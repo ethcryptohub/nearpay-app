@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isValidNearAccountId } from "../../../lib/merchant-settings";
+import { formatInvoiceNumber } from "../../../lib/payment-history";
 import { getSupabaseAdmin, getSupabaseOperationError } from "../../../lib/supabase-admin";
 import { isTransactionHash } from "../../../lib/server-wallet-auth";
 
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
 
     const { data, error } = await getSupabaseAdmin()
       .from("transactions")
-      .select("tx_hash")
+      .select("id, tx_hash")
       .eq("merchant_id", merchantId)
       .eq("amount", amount)
       .eq("token_type", "NEAR")
@@ -58,7 +59,10 @@ export async function GET(request: Request) {
     }
 
     return NextResponse.json(
-      { transactionHash: data?.tx_hash ?? null },
+      {
+        transactionHash: data?.tx_hash ?? null,
+        invoiceNumber: data ? formatInvoiceNumber(data.id) : null,
+      },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {

@@ -163,6 +163,7 @@ export default function POSPage() {
     "pending",
   );
   const [transactionHash, setTransactionHash] = useState("");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
   const [historySaveError, setHistorySaveError] = useState<string | null>(null);
   const [receiptGenerated, setReceiptGenerated] = useState(false);
   const [pollingError, setPollingError] = useState<string | null>(null);
@@ -215,6 +216,18 @@ export default function POSPage() {
         readApiError(result, "The verified sale could not be saved to Supabase."),
       );
     }
+    if (
+      typeof result !== "object" ||
+      result === null ||
+      !("record" in result) ||
+      typeof result.record !== "object" ||
+      result.record === null ||
+      !("invoiceNumber" in result.record) ||
+      typeof result.record.invoiceNumber !== "string"
+    ) {
+      throw new Error("The saved sale did not return an invoice number.");
+    }
+    return result.record.invoiceNumber;
   }, [connectedAccountId, walletSelector]);
 
   useEffect(() => {
@@ -503,16 +516,24 @@ export default function POSPage() {
             statusResult === null ||
             !("transactionHash" in statusResult) ||
             (statusResult.transactionHash !== null &&
-              typeof statusResult.transactionHash !== "string")
+              typeof statusResult.transactionHash !== "string") ||
+            !("invoiceNumber" in statusResult) ||
+            (statusResult.invoiceNumber !== null &&
+              typeof statusResult.invoiceNumber !== "string") ||
+            (statusResult.transactionHash !== null &&
+              typeof statusResult.invoiceNumber !== "string")
           ) {
             throw new Error("The payment status response has an invalid format.");
           }
 
           if (statusResult.transactionHash) {
             setTransactionHash(statusResult.transactionHash);
+            setInvoiceNumber(statusResult.invoiceNumber ?? "");
             setHistorySaveError(null);
             setReceiptGenerated(true);
             setPollingError(null);
+            setCart([]);
+            setFiatAmount("");
             setPaymentStatus("success");
             clearInterval(intervalId);
             return;
@@ -547,8 +568,9 @@ export default function POSPage() {
             !completedTransactionHashes.current.has(transfer.transactionHash)
           ) {
             completedTransactionHashes.current.add(transfer.transactionHash);
+            let savedInvoiceNumber = "";
             try {
-              await persistObservedTransaction(invoice, transfer);
+              savedInvoiceNumber = await persistObservedTransaction(invoice, transfer);
               setHistorySaveError(null);
               setReceiptGenerated(true);
             } catch (error) {
@@ -564,7 +586,10 @@ export default function POSPage() {
             }
 
             setTransactionHash(transfer.transactionHash);
+            setInvoiceNumber(savedInvoiceNumber);
             setPollingError(null);
+            setCart([]);
+            setFiatAmount("");
             setPaymentStatus("success");
             clearInterval(intervalId);
             return;
@@ -602,6 +627,7 @@ export default function POSPage() {
 
   function handleStartNewSale() {
     setTransactionHash("");
+    setInvoiceNumber("");
     setActiveInvoice(null);
     setPollingError(null);
     setHistorySaveError(null);
@@ -742,6 +768,7 @@ export default function POSPage() {
         startAfterBlockHeight,
       });
       setTransactionHash("");
+      setInvoiceNumber("");
       setHistorySaveError(null);
       setReceiptGenerated(false);
       setPaymentLinkMessage("");
@@ -1230,6 +1257,11 @@ export default function POSPage() {
                   {activeInvoice?.fiatCurrency === "INR" ? "₹" : "$"}
                   {activeInvoice?.fiatAmount} · {activeInvoice?.nearAmount} NEAR
                 </p>
+                {invoiceNumber ? (
+                  <p className="border border-neutral-300 px-3 py-2 font-mono text-sm font-bold">
+                    Invoice No: {invoiceNumber}
+                  </p>
+                ) : null}
                 {receiptGenerated ? (
                   <p className="border border-green-200 bg-green-50 px-3 py-2 text-sm font-bold text-green-800">
                     Invoice generated

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { JsonRpcProvider } from "near-api-js";
 import type { SignedMessage } from "@near-wallet-selector/core";
 import {
+  formatInvoiceNumber,
   isPaymentRecord,
   isReceiptItem,
   type PaymentRecord,
@@ -82,7 +83,7 @@ export async function GET(request: Request) {
     const { data, error } = await getSupabaseAdmin()
       .from("transactions")
       .select(
-        "merchant_id, customer_address, amount, token_type, tx_hash, status, created_at, fiat_amount, fiat_currency, usdc_amount, items, store_name",
+        "id, merchant_id, customer_address, amount, token_type, tx_hash, status, created_at, fiat_amount, fiat_currency, usdc_amount, items, store_name",
       )
       .eq("tx_hash", transactionHash)
       .maybeSingle();
@@ -97,6 +98,7 @@ export async function GET(request: Request) {
     }
 
     const record = {
+      invoiceNumber: formatInvoiceNumber(data.id),
       date: String(data.created_at),
       fiatAmount: String(data.fiat_amount),
       fiatCurrency: data.fiat_currency,
@@ -274,9 +276,11 @@ export async function POST(request: Request) {
     };
 
     const supabase = getSupabaseAdmin();
-    const { error } = await supabase
+    const { data: savedTransaction, error } = await supabase
       .from("transactions")
-      .upsert(record, { onConflict: "tx_hash" });
+      .upsert(record, { onConflict: "tx_hash" })
+      .select("id")
+      .single();
     if (error) {
       throw getSupabaseOperationError(
         "Unable to save verified payment",
@@ -285,6 +289,7 @@ export async function POST(request: Request) {
     }
 
     const responseRecord: PaymentRecord = {
+      invoiceNumber: formatInvoiceNumber(savedTransaction.id),
       date: record.created_at,
       fiatAmount: record.fiat_amount,
       fiatCurrency: normalizedFiatCurrency,

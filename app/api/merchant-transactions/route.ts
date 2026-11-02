@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { JsonRpcProvider } from "near-api-js";
 import type { SignedMessage } from "@near-wallet-selector/core";
 import {
+  formatInvoiceNumber,
   isReceiptItem,
   type PaymentRecord,
 } from "../../../lib/payment-history";
@@ -134,12 +135,14 @@ export async function POST(request: Request) {
       items: body.items,
       store_name: body.storeName.trim(),
     };
-    const { error } = await getSupabaseAdmin()
+    const { data: savedTransaction, error } = await getSupabaseAdmin()
       .from("transactions")
       .upsert(record, {
         onConflict: "tx_hash",
         ignoreDuplicates: true,
-      });
+      })
+      .select("id")
+      .maybeSingle();
     if (error) {
       throw getSupabaseOperationError(
         "Unable to save verified payment",
@@ -147,7 +150,25 @@ export async function POST(request: Request) {
       );
     }
 
+    let transactionId = savedTransaction?.id;
+    if (!transactionId) {
+      const { data: existingTransaction, error: existingTransactionError } =
+        await getSupabaseAdmin()
+          .from("transactions")
+          .select("id")
+          .eq("tx_hash", body.transactionHash)
+          .single();
+      if (existingTransactionError) {
+        throw getSupabaseOperationError(
+          "Unable to load the saved invoice number",
+          existingTransactionError,
+        );
+      }
+      transactionId = existingTransaction.id;
+    }
+
     const payment: PaymentRecord = {
+      invoiceNumber: formatInvoiceNumber(transactionId),
       date: new Date().toISOString(),
       fiatAmount: body.fiatAmount,
       fiatCurrency: body.fiatCurrency,

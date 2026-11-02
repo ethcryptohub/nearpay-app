@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import type { SignedMessage } from "@near-wallet-selector/core";
-import { isPaymentRecord, type PaymentRecord } from "../../../lib/payment-history";
+import {
+  formatInvoiceNumber,
+  isPaymentRecord,
+  type PaymentRecord,
+} from "../../../lib/payment-history";
 import {
   consumeAndVerifyWalletChallenge,
 } from "../../../lib/server-wallet-auth";
@@ -17,6 +21,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function toPaymentRecord(row: Record<string, unknown>): PaymentRecord | null {
   const record: unknown = {
+    invoiceNumber: formatInvoiceNumber(String(row.id ?? "")),
     date: String(row.created_at),
     fiatAmount: String(row.fiat_amount),
     fiatCurrency: row.fiat_currency,
