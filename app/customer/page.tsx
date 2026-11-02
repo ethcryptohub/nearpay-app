@@ -1343,9 +1343,18 @@ function PaymentPortal() {
                 <p className="text-xs font-bold uppercase tracking-widest text-emerald-800">
                   Payment complete
                 </p>
-                <h2 className="mt-1 text-xl font-black">Payment successful</h2>
+                <h2 className="mt-1 text-xl font-black">Payment successfully paid</h2>
               </div>
             </div>
+            {historySaveError ? (
+              <p className="mt-4 border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900">
+                Payment confirmed; invoice could not be saved yet.
+              </p>
+            ) : (
+              <p className="mt-4 border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">
+                Invoice generated
+              </p>
+            )}
             <p className="mt-6 text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
               Verified transaction hash
             </p>
@@ -1374,12 +1383,14 @@ function PaymentPortal() {
             >
               View on NEAR Explorer
             </a>
-            <a
-              href={`/pos/receipt/${encodeURIComponent(transactionHash)}`}
-              className="mt-4 inline-block text-sm font-bold underline underline-offset-4"
-            >
-              View / Print Receipt
-            </a>
+            {!historySaveError ? (
+              <a
+                href={`/pos/receipt/${encodeURIComponent(transactionHash)}`}
+                className="mt-4 inline-block text-sm font-bold underline underline-offset-4"
+              >
+                View / Print Invoice
+              </a>
+            ) : null}
             {historySaveError ? (
               <div className="mt-4">
                 <p role="alert" className="text-sm text-red-700">

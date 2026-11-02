@@ -164,6 +164,7 @@ export default function POSPage() {
   );
   const [transactionHash, setTransactionHash] = useState("");
   const [historySaveError, setHistorySaveError] = useState<string | null>(null);
+  const [receiptGenerated, setReceiptGenerated] = useState(false);
   const [pollingError, setPollingError] = useState<string | null>(null);
   const [paymentLinkMessage, setPaymentLinkMessage] = useState("");
   const [activeInvoice, setActiveInvoice] = useState<ActiveInvoice | null>(
@@ -469,7 +470,7 @@ export default function POSPage() {
     const invoice = activeInvoice;
     const intervalId = setInterval(() => {
       void pollForPayment();
-    }, 4000);
+    }, 3000);
 
     async function pollForPayment() {
       if (!active || isPolling) {
@@ -477,7 +478,53 @@ export default function POSPage() {
       }
 
       isPolling = true;
+      let statusCheckError: string | null = null;
       try {
+        try {
+          const statusResponse = await fetch(
+            `/api/payment-status?${new URLSearchParams({
+              merchantId: invoice.merchantAccountId,
+              amount: invoice.nearAmount,
+              openedAt: String(invoice.openedAtMs),
+            })}`,
+            { cache: "no-store" },
+          );
+          const statusResult: unknown = await statusResponse.json();
+          if (!statusResponse.ok) {
+            throw new Error(
+              readApiError(
+                statusResult,
+                "Unable to check the saved payment status.",
+              ),
+            );
+          }
+          if (
+            typeof statusResult !== "object" ||
+            statusResult === null ||
+            !("transactionHash" in statusResult) ||
+            (statusResult.transactionHash !== null &&
+              typeof statusResult.transactionHash !== "string")
+          ) {
+            throw new Error("The payment status response has an invalid format.");
+          }
+
+          if (statusResult.transactionHash) {
+            setTransactionHash(statusResult.transactionHash);
+            setHistorySaveError(null);
+            setReceiptGenerated(true);
+            setPollingError(null);
+            setPaymentStatus("success");
+            clearInterval(intervalId);
+            return;
+          }
+        } catch (error) {
+          console.error("Unable to check the saved invoice payment status.", error);
+          statusCheckError =
+            error instanceof Error
+              ? `Instant payment updates are temporarily unavailable: ${error.message}`
+              : "Instant payment updates are temporarily unavailable.";
+        }
+
         const latestBlockHeight = await getLatestFinalizedBlockHeight();
 
         let scannedBlocks = 0;
@@ -503,6 +550,7 @@ export default function POSPage() {
             try {
               await persistObservedTransaction(invoice, transfer);
               setHistorySaveError(null);
+              setReceiptGenerated(true);
             } catch (error) {
               console.error(
                 "Unable to save the verified payment to Supabase.",
@@ -523,7 +571,7 @@ export default function POSPage() {
           }
         }
 
-        setPollingError(null);
+        setPollingError(statusCheckError);
       } catch (error) {
         console.error("Unable to poll NEAR testnet for this payment.", error);
         setPollingError(
@@ -557,6 +605,7 @@ export default function POSPage() {
     setActiveInvoice(null);
     setPollingError(null);
     setHistorySaveError(null);
+    setReceiptGenerated(false);
     setFiatAmount("");
     setCart([]);
     setPaymentStatus("pending");
@@ -694,6 +743,7 @@ export default function POSPage() {
       });
       setTransactionHash("");
       setHistorySaveError(null);
+      setReceiptGenerated(false);
       setPaymentLinkMessage("");
       setPaymentStatus("pending");
       setIsModalOpen(true);
@@ -1158,24 +1208,37 @@ export default function POSPage() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="qr-title"
-            className="flex w-full max-w-sm flex-col items-center gap-6 rounded-3xl bg-white p-10 text-center shadow-2xl"
+            className="flex max-h-[calc(100dvh-2rem)] w-full max-w-sm flex-col items-center gap-4 overflow-y-auto rounded-3xl bg-white p-5 text-center shadow-2xl sm:p-6"
           >
-            <h2 id="qr-title" className="text-2xl font-black">
+            <h2 id="qr-title" className="text-xl font-black">
               {paymentStatus === "success" ? "Payment Complete" : "Scan to Pay"}
             </h2>
             {paymentStatus === "success" ? (
               <div
                 aria-live="polite"
-                className="flex flex-col items-center gap-4 py-6"
+                className="flex w-full flex-col items-center gap-3"
               >
                 <Check
                   aria-hidden="true"
-                  className="h-20 w-20 text-green-600"
+                  className="h-14 w-14 text-green-600"
                   strokeWidth={3}
                 />
-                <p className="text-2xl font-black text-green-700">
-                  Payment Successful!
+                <p className="text-xl font-black text-green-700">
+                  Payment successfully paid
                 </p>
+                <p className="text-sm font-semibold text-neutral-600">
+                  {activeInvoice?.fiatCurrency === "INR" ? "₹" : "$"}
+                  {activeInvoice?.fiatAmount} · {activeInvoice?.nearAmount} NEAR
+                </p>
+                {receiptGenerated ? (
+                  <p className="border border-green-200 bg-green-50 px-3 py-2 text-sm font-bold text-green-800">
+                    Invoice generated
+                  </p>
+                ) : (
+                  <p className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900">
+                    Payment confirmed; invoice is not available yet.
+                  </p>
+                )}
                 <p className="max-w-full break-all font-mono text-xs text-gray-600">
                   Transaction: {transactionHash}
                 </p>
@@ -1187,37 +1250,39 @@ export default function POSPage() {
                 >
                   View on NEAR Explorer
                 </a>
-                <a
-                  href={`/pos/receipt/${encodeURIComponent(transactionHash)}`}
-                  className="text-sm font-bold underline underline-offset-4"
-                >
-                  View / Print Receipt
-                </a>
+                {receiptGenerated ? (
+                  <a
+                    href={`/pos/receipt/${encodeURIComponent(transactionHash)}`}
+                    className="text-sm font-bold underline underline-offset-4"
+                  >
+                    View / Print Invoice
+                  </a>
+                ) : null}
                 <button
                   type="button"
                   onClick={handleStartNewSale}
-                  className="mt-4 rounded-xl bg-black px-6 py-4 font-bold text-white transition-colors hover:bg-gray-800"
+                  className="mt-2 w-full rounded-xl bg-black px-5 py-3 font-bold text-white transition-colors hover:bg-gray-800"
                 >
                   Start New Sale
                 </button>
               </div>
             ) : (
               <>
-                <div className="rounded-xl border-2 border-gray-100 bg-white p-4 shadow-inner">
+                <div className="rounded-xl border-2 border-gray-100 bg-white p-2 shadow-inner">
                   <QRCode
                     value={activeInvoice?.qrPayload ?? ""}
-                    size={280}
+                    size={208}
                     level="L"
                   />
                 </div>
-                <p className="text-center font-medium text-gray-500">
+                <p className="text-center text-sm font-medium text-gray-600">
                   Invoice: {activeInvoice?.nearAmount} NEAR to{" "}
                   {activeInvoice?.merchantAccountId}. The USDC quote (
                   {activeInvoice?.usdcAmount}) is informational only; NEAR is
                   the only token transferred on testnet.
                 </p>
                 {activeInvoice ? (
-                  <div className="w-full space-y-3">
+                  <div className="w-full space-y-2">
                     <a
                       href={activeInvoice.qrPayload}
                       target="_blank"
@@ -1260,8 +1325,7 @@ export default function POSPage() {
                   </p>
                 )}
                 <p className="text-sm font-semibold text-neutral-500">
-                  Waiting for the exact testnet payment. Checking every 4
-                  seconds.
+                  Waiting for payment confirmation. Checking every 3 seconds.
                 </p>
               </>
             )}
@@ -1275,7 +1339,7 @@ export default function POSPage() {
               onClick={() => {
                 setIsModalOpen(false);
               }}
-              className="mt-2 w-full rounded-xl bg-gray-100 py-4 font-bold text-black transition-colors hover:bg-gray-200"
+              className="w-full rounded-xl bg-gray-100 py-3 font-bold text-black transition-colors hover:bg-gray-200"
             >
               Close
             </button>
