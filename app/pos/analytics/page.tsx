@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WalletSelector } from "@near-wallet-selector/core";
 import { setupModal, type WalletSelectorModal } from "@near-wallet-selector/modal-ui";
 import Sidebar from "../../../components/Sidebar";
@@ -40,7 +40,7 @@ export default function AnalyticsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [syncMessage, setSyncMessage] = useState("");
+  const syncAttemptRef = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -99,7 +99,11 @@ export default function AnalyticsPage() {
   }, []);
 
   useEffect(() => {
-    if (!connectedAccountId || connectedAccountId === merchantAccountId) return;
+    if (!connectedAccountId) {
+      setTransactions([]);
+      return;
+    }
+    if (connectedAccountId === merchantAccountId) return;
     let active = true;
     setTransactions([]);
     void loadMerchantSettings(connectedAccountId)
@@ -121,16 +125,14 @@ export default function AnalyticsPage() {
     };
   }, [connectedAccountId, merchantAccountId]);
 
-  async function syncAnalytics() {
+  const syncAnalytics = useCallback(async () => {
     if (!selector || !connectedAccountId || connectedAccountId !== merchantAccountId) {
       setError("Connect the configured merchant NEAR wallet to load analytics.");
       walletModal?.show();
       return;
     }
-
     setIsSyncing(true);
     setError(null);
-    setSyncMessage("");
     try {
       const authorization = await signMerchantAuthorization(
         selector,
@@ -160,8 +162,14 @@ export default function AnalyticsPage() {
             : "Verified sales could not be loaded from Supabase.";
         throw new Error(message);
       }
-      setTransactions(result.records);
-      setSyncMessage(`Loaded ${result.records.length} verified transaction(s) from Supabase.`);
+      const activeAccountId =
+        selector.store.getState().accounts.find((account) => account.active)
+          ?.accountId ??
+        selector.store.getState().accounts[0]?.accountId ??
+        null;
+      if (activeAccountId === connectedAccountId) {
+        setTransactions(result.records);
+      }
     } catch (syncError) {
       console.error("Unable to load analytics from Supabase.", syncError);
       setError(
@@ -172,7 +180,31 @@ export default function AnalyticsPage() {
     } finally {
       setIsSyncing(false);
     }
-  }
+  }, [connectedAccountId, merchantAccountId, selector, walletModal]);
+
+  useEffect(() => {
+    if (!connectedAccountId || connectedAccountId !== merchantAccountId) {
+      syncAttemptRef.current = null;
+      return;
+    }
+
+    if (isLoading || !selector) {
+      return;
+    }
+
+    const attemptKey = `${connectedAccountId}:${merchantAccountId}`;
+    if (syncAttemptRef.current === attemptKey) {
+      return;
+    }
+    syncAttemptRef.current = attemptKey;
+    void syncAnalytics();
+  }, [
+    connectedAccountId,
+    isLoading,
+    merchantAccountId,
+    selector,
+    syncAnalytics,
+  ]);
   const settledTransactions = useMemo(
     () =>
       transactions.filter(
@@ -237,23 +269,28 @@ export default function AnalyticsPage() {
             {isLoading
               ? "Loading merchant settings and wallet..."
               : connectedAccountId === merchantAccountId
-                ? "Merchant wallet authorized for analytics."
+                ? isSyncing
+                  ? "Authorizing and loading sales from Supabase..."
+                  : transactions.length > 0
+                    ? `${transactions.length} verified transaction(s) loaded from Supabase.`
+                    : "Sales are loaded automatically after merchant authorization."
                 : "Connect the configured merchant wallet to load sales."}
-            {syncMessage ? (
-              <p role="status" className="mt-2 text-xs text-neutral-600">
-                {syncMessage}
-              </p>
-            ) : null}
           </div>
           {connectedAccountId === merchantAccountId ? (
-            <button
-              type="button"
-              onClick={() => void syncAnalytics()}
-              disabled={isLoading || isSyncing}
-              className="bg-black px-4 py-3 text-xs font-bold uppercase tracking-widest text-white disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isSyncing ? "Loading..." : "Load Supabase Sales"}
-            </button>
+            error ? (
+              <button
+                type="button"
+                onClick={() => void syncAnalytics()}
+                disabled={isSyncing}
+                className="border border-black px-4 py-2 text-xs font-bold uppercase tracking-wider transition hover:bg-black hover:text-white disabled:opacity-50"
+              >
+                {isSyncing ? "Loading..." : "Retry secure load"}
+              </button>
+            ) : (
+              <span role={isSyncing ? "status" : undefined} className="text-xs font-bold uppercase tracking-wider">
+                {isSyncing ? "Loading sales..." : "Auto-loaded"}
+              </span>
+            )
           ) : (
             <button
               type="button"

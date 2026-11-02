@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { WalletSelector } from "@near-wallet-selector/core";
 import { setupModal, type WalletSelectorModal } from "@near-wallet-selector/modal-ui";
@@ -40,7 +40,9 @@ export default function HistoryPage() {
   const [isInitializing, setIsInitializing] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const [syncMessage, setSyncMessage] = useState("");
+  const [merchantSettingsLoaded, setMerchantSettingsLoaded] = useState(false);
+  const [merchantSettingsAvailable, setMerchantSettingsAvailable] = useState(false);
+  const syncAttemptRef = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -56,7 +58,10 @@ export default function HistoryPage() {
         const settings = await loadMerchantSettings(
           defaultMerchantSettings.merchantAccountId,
         );
-        if (active) setMerchantAccountId(settings.merchantAccountId);
+        if (active) {
+          setMerchantAccountId(settings.merchantAccountId);
+          setMerchantSettingsAvailable(true);
+        }
       } catch (error) {
         console.error("Unable to load merchant settings for history.", error);
         setHistoryError(
@@ -64,6 +69,8 @@ export default function HistoryPage() {
             ? error.message
             : "Merchant settings could not be loaded from Supabase.",
         );
+      } finally {
+        if (active) setMerchantSettingsLoaded(true);
       }
     }
     void loadMerchantPreferences();
@@ -111,16 +118,24 @@ export default function HistoryPage() {
   }, []);
 
   useEffect(() => {
-    if (!connectedAccountId || connectedAccountId === merchantAccountId) return;
+    if (!connectedAccountId) {
+      setTransactions([]);
+      return;
+    }
+    if (connectedAccountId === merchantAccountId) return;
     let active = true;
     setTransactions([]);
     void loadMerchantSettings(connectedAccountId)
       .then((settings) => {
-        if (active) setMerchantAccountId(settings.merchantAccountId);
+        if (active) {
+          setMerchantAccountId(settings.merchantAccountId);
+          setMerchantSettingsAvailable(true);
+        }
       })
       .catch((error: unknown) => {
         console.error("Unable to load connected merchant settings.", error);
         if (active) {
+          setMerchantSettingsAvailable(false);
           setHistoryError(
             error instanceof Error
               ? error.message
@@ -133,7 +148,7 @@ export default function HistoryPage() {
     };
   }, [connectedAccountId, merchantAccountId]);
 
-  async function syncSharedHistory() {
+  const syncSharedHistory = useCallback(async () => {
     if (
       !selector ||
       !connectedAccountId ||
@@ -142,10 +157,8 @@ export default function HistoryPage() {
       setHistoryError("Connect the configured merchant NEAR wallet to sync shared history.");
       return;
     }
-
     setIsSyncing(true);
     setHistoryError(null);
-    setSyncMessage("");
     try {
       const authorization = await signMerchantAuthorization(
         selector,
@@ -171,9 +184,14 @@ export default function HistoryPage() {
       ) {
         throw new Error(readApiError(result, "Shared merchant history could not be loaded."));
       }
-
-      setTransactions(result.records as PaymentRecord[]);
-      setSyncMessage(`Loaded ${result.records.length} verified shared transaction(s).`);
+      const activeAccountId =
+        selector.store.getState().accounts.find((account) => account.active)
+          ?.accountId ??
+        selector.store.getState().accounts[0]?.accountId ??
+        null;
+      if (activeAccountId === connectedAccountId) {
+        setTransactions(result.records);
+      }
     } catch (error) {
       console.error("Unable to synchronize shared merchant history.", error);
       setHistoryError(
@@ -184,7 +202,38 @@ export default function HistoryPage() {
     } finally {
       setIsSyncing(false);
     }
-  }
+  }, [connectedAccountId, merchantAccountId, selector]);
+
+  useEffect(() => {
+    if (!connectedAccountId || connectedAccountId !== merchantAccountId) {
+      syncAttemptRef.current = null;
+      return;
+    }
+
+    if (
+      isInitializing ||
+      !merchantSettingsLoaded ||
+      !merchantSettingsAvailable ||
+      !selector
+    ) {
+      return;
+    }
+
+    const attemptKey = `${connectedAccountId}:${merchantAccountId}`;
+    if (syncAttemptRef.current === attemptKey) {
+      return;
+    }
+    syncAttemptRef.current = attemptKey;
+    void syncSharedHistory();
+  }, [
+    connectedAccountId,
+    isInitializing,
+    merchantAccountId,
+    merchantSettingsAvailable,
+    merchantSettingsLoaded,
+    selector,
+    syncSharedHistory,
+  ]);
 
   return (
     <div className="flex min-h-screen flex-col bg-[#f4f4f1] font-sans text-black lg:flex-row">
@@ -199,8 +248,8 @@ export default function HistoryPage() {
               02 / TRANSACTIONS
             </h1>
             <p className="mt-3 text-sm text-neutral-600">
-              Verified transactions are stored in Supabase. Sign with the
-              merchant wallet to load payment and customer details.
+              Verified transactions are stored in Supabase and load
+              automatically after merchant authorization.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -210,14 +259,20 @@ export default function HistoryPage() {
               </span>
             ) : null}
             {connectedAccountId === merchantAccountId ? (
-              <button
-                type="button"
-                onClick={() => void syncSharedHistory()}
-                disabled={isSyncing}
-                className="bg-black px-5 py-3 text-xs font-bold uppercase tracking-widest text-white transition hover:bg-neutral-800 disabled:opacity-50"
-              >
-                {isSyncing ? "Authorizing & syncing..." : "Sync shared history"}
-              </button>
+              historyError ? (
+                <button
+                  type="button"
+                  onClick={() => void syncSharedHistory()}
+                  disabled={isSyncing}
+                  className="border border-black px-4 py-2 text-xs font-bold uppercase tracking-wider transition hover:bg-black hover:text-white disabled:opacity-50"
+                >
+                  {isSyncing ? "Loading..." : "Retry secure load"}
+                </button>
+              ) : (
+                <span role={isSyncing ? "status" : undefined} className="text-xs font-bold uppercase tracking-wider">
+                  {isSyncing ? "Loading history..." : "Auto-loaded"}
+                </span>
+              )
             ) : (
               <button
                 type="button"
@@ -237,11 +292,6 @@ export default function HistoryPage() {
         {historyError ? (
           <p role="alert" className="mt-6 border border-red-200 bg-red-50 p-4 text-sm text-red-800">
             {historyError}
-          </p>
-        ) : null}
-        {syncMessage ? (
-          <p role="status" className="mt-4 text-sm font-medium text-emerald-800">
-            {syncMessage}
           </p>
         ) : null}
         <div className="mt-8 w-full overflow-x-auto border border-black bg-white shadow-[3px_3px_0_0_#111]">
@@ -357,8 +407,9 @@ export default function HistoryPage() {
               {transactions.length === 0 && !historyError ? (
                 <tr className="border-b border-neutral-200">
                   <td colSpan={9} className="px-4 py-8 text-center text-sm text-neutral-500">
-                    No transactions yet. Connect the merchant wallet and sync to
-                    load shared payments.
+                    {isSyncing
+                      ? "Loading verified payments from Supabase..."
+                      : "No verified transactions are available for this merchant yet."}
                   </td>
                 </tr>
               ) : null}

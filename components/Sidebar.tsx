@@ -9,18 +9,18 @@ export default function Sidebar() {
   const linkClassName = (href: string) =>
     `flex shrink-0 items-center gap-2 rounded-lg px-3 py-2.5 text-xs transition-colors sm:text-sm lg:gap-3 lg:px-4 ${
       pathname === href
-      ? "bg-black font-bold text-white ring-1 ring-emerald-700 ring-offset-2"
-        : "font-medium text-gray-500 hover:bg-gray-100 hover:text-black"
+        ? "bg-[#121633] font-bold text-white ring-1 ring-[#ff9f1c] ring-offset-2"
+        : "font-medium text-[#6b7392] hover:bg-[#fff3dc] hover:text-[#121633]"
     }`;
 
   return (
-    <aside className="flex w-full shrink-0 items-center justify-between gap-3 border-b border-black bg-white p-3 sm:p-4 lg:sticky lg:top-0 lg:h-screen lg:w-56 lg:flex-col lg:items-stretch lg:justify-start lg:border-b-0 lg:border-r lg:p-5">
+    <aside className="flex w-full shrink-0 items-center justify-between gap-3 border-b border-[#dde2ee] bg-white p-3 sm:p-4 lg:sticky lg:top-0 lg:h-screen lg:w-56 lg:flex-col lg:items-stretch lg:justify-start lg:border-b-0 lg:border-r lg:p-5">
       <Link
         href="/pos"
-        className="flex shrink-0 items-center gap-3 text-2xl font-black tracking-tighter"
+        className="flex shrink-0 items-center gap-3 text-2xl font-black tracking-tighter text-[#121633]"
         aria-label="NEARPay merchant dashboard"
       >
-        <span className="flex h-9 w-9 items-center justify-center bg-black text-base text-white">
+        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#121633] text-base text-[#ff9f1c]">
           N
         </span>
         <span>NEARPay</span>

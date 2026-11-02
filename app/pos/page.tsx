@@ -131,7 +131,6 @@ type ActiveInvoice = {
 };
 
 export default function POSPage() {
-  const [fiatAmount, setFiatAmount] = useState("");
   const [fiatCurrency, setFiatCurrency] = useState<"INR" | "USD">("INR");
   const [merchantSettings, setMerchantSettings] =
     useState<MerchantSettings>(defaultMerchantSettings);
@@ -355,16 +354,11 @@ export default function POSPage() {
       total + (cartUnitPrices[index] ?? 0) * line.quantity,
     0,
   );
-  const quickAmount = Number(fiatAmount);
-  const validQuickAmount =
-    Number.isFinite(quickAmount) && quickAmount > 0 ? quickAmount : 0;
-  const unroundedFiatTotal =
-    cartSubtotalInSelectedCurrency + validQuickAmount;
   const fiatTotal =
     !hasCartConversionError &&
-    Number.isFinite(unroundedFiatTotal) &&
-    unroundedFiatTotal > 0
-      ? Math.round((unroundedFiatTotal + Number.EPSILON) * 100) / 100
+    Number.isFinite(cartSubtotalInSelectedCurrency) &&
+    cartSubtotalInSelectedCurrency > 0
+      ? Math.round((cartSubtotalInSelectedCurrency + Number.EPSILON) * 100) / 100
       : 0;
   const fiatTotalFormatted = hasCartConversionError
     ? "—"
@@ -533,7 +527,6 @@ export default function POSPage() {
             setReceiptGenerated(true);
             setPollingError(null);
             setCart([]);
-            setFiatAmount("");
             setPaymentStatus("success");
             clearInterval(intervalId);
             return;
@@ -589,7 +582,6 @@ export default function POSPage() {
             setInvoiceNumber(savedInvoiceNumber);
             setPollingError(null);
             setCart([]);
-            setFiatAmount("");
             setPaymentStatus("success");
             clearInterval(intervalId);
             return;
@@ -632,7 +624,6 @@ export default function POSPage() {
     setPollingError(null);
     setHistorySaveError(null);
     setReceiptGenerated(false);
-    setFiatAmount("");
     setCart([]);
     setPaymentStatus("pending");
     setIsModalOpen(false);
@@ -787,11 +778,11 @@ export default function POSPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col bg-[#f4f4f1] font-sans text-black lg:flex-row">
+    <div className="relative flex min-h-screen flex-col bg-[#eef1f7] font-sans text-[#121633] lg:flex-row">
       {!hasMerchantAccess ? (
         <main className="flex min-h-screen items-center justify-center px-6 py-12">
-          <section className="w-full max-w-lg border border-black bg-white p-8 shadow-[5px_5px_0_0_#111] sm:p-12">
-            <p className="text-xs font-bold uppercase tracking-[0.3em]">
+          <section className="w-full max-w-lg rounded-3xl border border-[#dde2ee] bg-white p-8 shadow-sm sm:p-12">
+            <p className="text-xs font-bold uppercase tracking-[0.3em] text-[#6b7392]">
               NEARPAY / MERCHANT ACCESS
             </p>
             <h1 className="mt-8 text-4xl font-black tracking-tight">
@@ -827,7 +818,7 @@ export default function POSPage() {
                   }
                 }}
                 disabled={!walletSelector || !walletModal}
-                className="mt-8 w-full bg-black px-6 py-4 text-sm font-bold uppercase tracking-widest text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
+                className="mt-8 w-full rounded-xl bg-[#ff9f1c] px-6 py-4 text-sm font-bold text-[#121633] transition hover:bg-[#f39200] disabled:cursor-not-allowed disabled:bg-[#d6dae6] disabled:text-[#8a90a8]"
               >
                 {connectedAccountId
                   ? "Choose Merchant Wallet"
@@ -847,7 +838,7 @@ export default function POSPage() {
                   type="button"
                   onClick={() => void handleSignOut()}
                   disabled={isSigningOut}
-                  className="mt-3 font-bold underline underline-offset-4 disabled:opacity-50"
+                  className="mt-3 font-bold text-[#1d2350] underline underline-offset-4 disabled:opacity-50"
                 >
                   {isSigningOut ? "Signing out..." : "Sign Out Current Wallet"}
                 </button>
@@ -864,10 +855,10 @@ export default function POSPage() {
         <>
           <Sidebar />
 
-          <main className="min-w-0 flex-1 bg-[#f4f4f1] p-4 sm:p-6 lg:p-8">
-            <header className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-neutral-200 pb-5">
+          <main className="min-w-0 flex-1 bg-[#eef1f7] p-4 sm:p-6 lg:p-8">
+            <header className="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-[#dde2ee] bg-white p-5 shadow-sm">
               <div>
-                <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#6b7392]">
                   {merchantSettings.storeName} / TESTNET TERMINAL
                 </p>
                 <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">
@@ -875,12 +866,12 @@ export default function POSPage() {
                 </h1>
               </div>
               <div className="flex flex-wrap items-center gap-3">
-                <div className="border border-neutral-300 bg-white px-4 py-2">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">
+                <div className="rounded-xl border border-[#dde2ee] bg-white px-4 py-2">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#6b7392]">
                     Merchant wallet
                   </p>
                   <p className="mt-1 flex items-center gap-2 font-mono text-xs font-semibold">
-                    <span className="h-2 w-2 rounded-full bg-green-600" />
+                    <span className="h-2 w-2 rounded-full bg-[#12b886]" />
                     {connectedAccountId}
                   </p>
                 </div>
@@ -888,7 +879,7 @@ export default function POSPage() {
                   type="button"
                   onClick={() => void handleSignOut()}
                   disabled={isSigningOut}
-                  className="border border-black bg-white px-4 py-3 text-xs font-bold uppercase tracking-widest transition hover:bg-black hover:text-white disabled:opacity-50"
+                  className="rounded-xl border border-[#dde2ee] bg-white px-4 py-3 text-xs font-bold uppercase tracking-widest transition hover:border-[#ff9f1c] hover:bg-[#fff3dc] disabled:opacity-50"
                 >
                   {isSigningOut ? "Signing out..." : "Sign out"}
                 </button>
@@ -905,18 +896,18 @@ export default function POSPage() {
               <div className="space-y-5">
                 <section
                   aria-labelledby="catalog-heading"
-                  className="border border-neutral-200 bg-white p-5 sm:p-6"
+                  className="rounded-3xl border border-[#dde2ee] bg-white p-5 shadow-sm sm:p-6"
                 >
                   <div className="mb-5 flex items-end justify-between gap-4">
                     <div>
-                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-500">
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#6b7392]">
                         Browse items
                       </p>
                       <h2 id="catalog-heading" className="mt-1 text-xl font-black">
                         Product catalog
                       </h2>
                     </div>
-                    <span className="text-xs font-semibold text-neutral-500">
+                    <span className="text-xs font-semibold text-[#6b7392]">
                       {products.length}{" "}
                       {products.length === 1 ? "item" : "items"}
                     </span>
@@ -935,7 +926,7 @@ export default function POSPage() {
                           key={product.id}
                           type="button"
                           onClick={() => addProductToCart(product)}
-                          className="group flex min-h-44 flex-col border border-neutral-200 bg-white p-3 text-left transition hover:-translate-y-0.5 hover:border-black hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black"
+                          className="group flex min-h-44 flex-col rounded-2xl border border-[#dde2ee] bg-white p-3 text-left transition hover:-translate-y-0.5 hover:border-[#ff9f1c] hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ff9f1c]"
                         >
                           {product.imageUrl ? (
                             <Image
@@ -945,28 +936,28 @@ export default function POSPage() {
                               height={140}
                               unoptimized
                               loading="lazy"
-                              className="h-24 w-full border border-neutral-100 object-cover"
+                              className="h-24 w-full rounded-xl border border-[#eef1f7] object-cover"
                             />
                           ) : (
-                            <span className="flex h-24 w-full items-center justify-center bg-neutral-100">
+                            <span className="flex h-24 w-full items-center justify-center rounded-xl bg-[#eef1f7]">
                               <ShoppingBag
                                 aria-hidden="true"
                                 size={26}
-                                className="text-neutral-400"
+                                className="text-[#9aa2b8]"
                               />
                             </span>
                           )}
                           <span className="mt-3 line-clamp-1 text-sm font-bold">
                             {product.name}
                           </span>
-                          <span className="mt-1 line-clamp-1 text-xs text-neutral-500">
+                          <span className="mt-1 line-clamp-1 text-xs text-[#6b7392]">
                             {product.description || "Tap to add to sale"}
                           </span>
                           <span className="mt-auto flex w-full items-center justify-between pt-3">
                             <span className="font-black">
                               {formatFiatAmount(product.price, product.currency)}
                             </span>
-                            <span className="flex h-7 w-7 items-center justify-center bg-black text-white transition group-hover:bg-neutral-700">
+                            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#ff9f1c] text-[#121633] transition group-hover:bg-[#f39200]">
                               <Plus aria-hidden="true" size={16} />
                             </span>
                           </span>
@@ -974,10 +965,10 @@ export default function POSPage() {
                       ))}
                     </div>
                   ) : (
-                    <div className="border border-dashed border-neutral-300 px-5 py-10 text-center">
-                      <ShoppingBag className="mx-auto text-neutral-400" size={28} />
+                    <div className="rounded-2xl border border-dashed border-[#c4cbe2] bg-[#f8f9fd] px-5 py-10 text-center">
+                      <ShoppingBag className="mx-auto text-[#9aa2b8]" size={28} />
                       <p className="mt-3 text-sm font-semibold">Your catalog is empty.</p>
-                      <p className="mt-1 text-xs text-neutral-500">
+                      <p className="mt-1 text-xs text-[#6b7392]">
                         Products can be configured from merchant settings.
                       </p>
                     </div>
@@ -986,18 +977,18 @@ export default function POSPage() {
 
                 <section
                   aria-labelledby="cart-heading"
-                  className="border border-neutral-200 bg-white p-5 sm:p-6"
+                  className="rounded-3xl border border-[#dde2ee] bg-white p-5 shadow-sm sm:p-6"
                 >
-                  <div className="flex items-center justify-between border-b border-neutral-200 pb-4">
+                  <div className="flex items-center justify-between border-b border-[#dde2ee] pb-4">
                     <div>
-                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-500">
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#6b7392]">
                         Current order
                       </p>
                       <h2 id="cart-heading" className="mt-1 text-xl font-black">
                         Sale items
                       </h2>
                     </div>
-                    <span className="bg-neutral-100 px-3 py-2 text-xs font-bold">
+                    <span className="rounded-full bg-[#eef1f7] px-3 py-2 text-xs font-bold text-[#6b7392]">
                       {cartRows.reduce((count, row) => count + row.quantity, 0)}{" "}
                       {cartRows.reduce((count, row) => count + row.quantity, 0) === 1
                         ? "item"
@@ -1005,7 +996,7 @@ export default function POSPage() {
                     </span>
                   </div>
                   {cartRows.length > 0 ? (
-                    <ul className="divide-y divide-neutral-200">
+                    <ul className="divide-y divide-[#dde2ee]">
                       {cartRows.map(({ product, quantity }, index) => {
                         const selectedUnitPrice = cartUnitPrices[index];
                         return (
@@ -1015,7 +1006,7 @@ export default function POSPage() {
                         >
                           <div className="min-w-0 flex-1">
                             <p className="break-words text-sm font-bold">{product.name}</p>
-                            <p className="mt-1 text-xs text-neutral-500">
+                            <p className="mt-1 text-xs text-[#6b7392]">
                               {selectedUnitPrice === null
                                 ? `${formatFiatAmount(product.price, product.currency)} each`
                                 : `${formatFiatAmount(selectedUnitPrice, fiatCurrency)} each`}
@@ -1026,7 +1017,7 @@ export default function POSPage() {
                               type="button"
                               onClick={() => updateCartQuantity(product.id, -1)}
                               aria-label={`Decrease ${product.name} quantity`}
-                              className="flex h-8 w-8 items-center justify-center border border-neutral-300 transition hover:border-black"
+                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#dde2ee] transition hover:border-[#ff9f1c] hover:bg-[#fff3dc]"
                             >
                               <Minus aria-hidden="true" size={14} />
                             </button>
@@ -1037,7 +1028,7 @@ export default function POSPage() {
                               type="button"
                               onClick={() => updateCartQuantity(product.id, 1)}
                               aria-label={`Increase ${product.name} quantity`}
-                              className="flex h-8 w-8 items-center justify-center border border-neutral-300 transition hover:border-black"
+                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#dde2ee] transition hover:border-[#ff9f1c] hover:bg-[#fff3dc]"
                             >
                               <Plus aria-hidden="true" size={14} />
                             </button>
@@ -1049,7 +1040,7 @@ export default function POSPage() {
                                 )
                               }
                               aria-label={`Remove ${product.name} from sale`}
-                              className="ml-1 p-2 text-neutral-500 transition hover:text-red-700"
+                              className="ml-1 rounded-lg p-2 text-[#6b7392] transition hover:bg-red-50 hover:text-red-700"
                             >
                               <Trash2 aria-hidden="true" size={16} />
                             </button>
@@ -1067,13 +1058,13 @@ export default function POSPage() {
                       })}
                     </ul>
                   ) : (
-                    <p className="py-8 text-center text-sm text-neutral-500">
-                      No items yet. Choose a product above or enter a custom amount.
+                    <p className="py-8 text-center text-sm text-[#6b7392]">
+                      No items yet. Choose a product above to start a sale.
                     </p>
                   )}
                   {cartRows.length > 0 ? (
-                    <div className="flex justify-between border-t border-neutral-200 pt-4 text-sm">
-                      <span className="text-neutral-500">Items subtotal</span>
+                    <div className="flex justify-between border-t border-[#dde2ee] pt-4 text-sm">
+                      <span className="text-[#6b7392]">Items subtotal</span>
                       <span className="font-bold">
                         {hasCartConversionError
                           ? "Rate unavailable"
@@ -1087,77 +1078,44 @@ export default function POSPage() {
                 </section>
               </div>
 
-              <aside className="border border-black bg-white p-5 sm:p-6 xl:sticky xl:top-6">
-                <div className="flex items-start justify-between gap-3 border-b border-neutral-200 pb-5">
+              <aside className="rounded-3xl border border-[#dde2ee] bg-white p-5 shadow-sm sm:p-6 xl:sticky xl:top-6">
+                <div className="flex items-start justify-between gap-3 border-b border-[#dde2ee] pb-5">
                   <div>
-                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-500">
+                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#6b7392]">
                       Checkout
                     </p>
                     <h2 className="mt-1 text-xl font-black">Payment summary</h2>
                   </div>
-                  <span className="border border-neutral-300 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-700">
+                  <span className="rounded-full bg-[#fff3dc] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#a66300]">
                     Testnet
                   </span>
                 </div>
 
-                <label
-                  htmlFor="fiat-amount"
-                  className="mt-5 block text-xs font-bold uppercase tracking-[0.16em] text-neutral-600"
-                >
-                  Quick amount
-                </label>
-                <div className="mt-2 flex border border-neutral-300 focus-within:border-black">
-                  <select
-                    aria-label="Fiat currency"
-                    value={fiatCurrency}
-                    onChange={(event) =>
-                      setFiatCurrency(event.target.value === "USD" ? "USD" : "INR")
-                    }
-                    className="border-r border-neutral-300 bg-neutral-50 px-3 text-sm font-bold outline-none"
-                  >
-                    <option value="INR">INR</option>
-                    <option value="USD">USD</option>
-                  </select>
-                  <input
-                    id="fiat-amount"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={fiatAmount}
-                    onChange={(event) => setFiatAmount(event.target.value)}
-                    placeholder="0.00"
-                    className="min-w-0 flex-1 px-4 py-4 text-right text-3xl font-black outline-none placeholder:text-neutral-300"
-                  />
-                </div>
-                <p className="mt-2 text-xs text-neutral-500">
-                  Optional extra charge; product prices use live exchange rates.
-                </p>
-
-                <div className="mt-6 border border-black bg-black p-5 text-white">
-                  <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-300">
+                <div className="mt-6 rounded-2xl bg-gradient-to-br from-[#121633] to-[#1d2350] p-5 text-white">
+                  <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#b9c0ee]">
                     Total due
                   </p>
                   <p className="mt-2 text-4xl font-black tracking-tight">
                     {fiatCurrency === "INR" ? "₹" : "$"}
                     {fiatTotalFormatted}
                   </p>
-                  <p className="mt-2 text-xs text-neutral-300">
+                  <p className="mt-2 text-xs text-[#b9c0ee]">
                     {cartRows.reduce((count, row) => count + row.quantity, 0)}{" "}
                     cart items · {fiatCurrency}
                   </p>
                 </div>
 
                 <div className="mt-5 grid grid-cols-2 gap-3">
-                  <div className="border border-neutral-200 p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">
+                  <div className="rounded-xl border border-[#dde2ee] p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-[#6b7392]">
                       Payable on testnet
                     </p>
                     <p className="mt-2 break-all text-lg font-black">
                       {nearAmount} <span className="text-xs">NEAR</span>
                     </p>
                   </div>
-                  <div className="border border-neutral-200 p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-800">
+                  <div className="rounded-xl border border-[#dde2ee] p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-[#0c8a63]">
                       USDC equivalent · preview
                     </p>
                     <p className="mt-2 break-all text-xl font-black text-emerald-950">
@@ -1166,7 +1124,7 @@ export default function POSPage() {
                   </div>
                 </div>
                 {tokenRates ? (
-                  <div className="mt-3 space-y-1 text-xs leading-5 text-neutral-600">
+                  <div className="mt-3 space-y-1 text-xs leading-5 text-[#6b7392]">
                     <p>
                       1 NEAR ≈ {fiatCurrency}{" "}
                       {tokenRates.prices.NEAR[fiatCurrency].toLocaleString(
@@ -1188,7 +1146,7 @@ export default function POSPage() {
                       })}{" "}
                       USDC
                     </p>
-                    <p className="text-neutral-500">
+                    <p className="text-[#6b7392]">
                       Updated {new Date(tokenRates.fetchedAt).toLocaleTimeString()}
                     </p>
                   </div>
@@ -1211,14 +1169,14 @@ export default function POSPage() {
                     isPreparingInvoice
                   }
                   onClick={() => void handleGenerateQr()}
-                  className="mt-5 flex w-full items-center justify-center gap-3 bg-black px-5 py-4 text-sm font-black uppercase tracking-[0.13em] text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
+                  className="mt-5 flex w-full items-center justify-center gap-3 rounded-[14px] bg-[#ff9f1c] px-5 py-4 text-sm font-black uppercase tracking-[0.13em] text-[#121633] transition hover:bg-[#f39200] disabled:cursor-not-allowed disabled:bg-[#d6dae6] disabled:text-[#8a90a8]"
                 >
                   {isPreparingInvoice
                     ? "Preparing QR..."
                     : "Generate payment QR"}
                   {!isPreparingInvoice ? <Plus aria-hidden="true" size={18} /> : null}
                 </button>
-                <p className="mt-3 text-center text-[11px] leading-5 text-neutral-500">
+                <p className="mt-3 text-center text-[11px] leading-5 text-[#6b7392]">
                   Testnet settles in native NEAR. USDC is an informational quote only.
                 </p>
                 {pollingError && !isModalOpen ? (

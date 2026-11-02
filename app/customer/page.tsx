@@ -521,13 +521,6 @@ function PaymentPortal() {
 
   useEffect(() => {
     void refreshWalletBalances();
-    if (!accountId) {
-      return;
-    }
-    const intervalId = setInterval(() => {
-      void refreshWalletBalances();
-    }, 60_000);
-    return () => clearInterval(intervalId);
   }, [accountId, refreshWalletBalances]);
 
   useEffect(() => {
@@ -892,6 +885,7 @@ function PaymentPortal() {
 
         setTransactionHash(hash);
         setPaymentState("success");
+        void refreshWalletBalances();
         if (historySaved) {
           void refreshCustomerHistory();
         }
@@ -914,6 +908,7 @@ function PaymentPortal() {
       invoice,
       merchant,
       refreshCustomerHistory,
+      refreshWalletBalances,
     ],
   );
 
@@ -1154,7 +1149,6 @@ function PaymentPortal() {
   }
 
   const hasInvoice = Boolean(amount || merchant);
-  const customerDetailsError = validateCustomerProfile(customerDetails);
   const invoiceError = !hasInvoice
     ? null
     : !amountInYocto
@@ -1196,79 +1190,55 @@ function PaymentPortal() {
     historyAccountId === accountId ? customerHistory : [];
 
   return (
-    <main className="min-h-screen bg-white px-4 py-6 font-sans text-black sm:px-6 sm:py-10">
-      <div className="mx-auto max-w-7xl">
-        <header className="flex flex-wrap items-center justify-between gap-5 border-b border-black pb-6">
+    <main className="min-h-screen bg-[#eef1f7] px-4 py-4 font-sans text-[#121633] sm:py-6">
+      <div className="mx-auto max-w-[460px]">
+        <header className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center bg-black text-lg font-black tracking-tight text-white">
+            <div className="flex h-[34px] w-[34px] items-center justify-center rounded-[10px] bg-[#121633] text-lg font-black tracking-tight text-[#ff9f1c]">
               N
             </div>
             <div>
-              <p className="text-xs font-black uppercase tracking-[0.24em]">
-                NEARPAY
-              </p>
-              <p className="mt-1 text-xs text-neutral-500">
-                Secure customer checkout
-              </p>
+              <p className="text-lg font-black tracking-tight">NEARPay</p>
             </div>
           </div>
-          <span className="border border-black bg-white px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em]">
+          <span className="rounded-full bg-[#fff3dc] px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[#a66300]">
             NEAR TESTNET
           </span>
         </header>
 
-        <div className="mt-8 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.24em] text-neutral-500">
-              Payment portal
-            </p>
-            <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">
-              Customer checkout
-            </h1>
-          </div>
-          <p className="max-w-md text-sm leading-6 text-neutral-600">
-            Review your request, add your contact details, and approve securely
-            with your NEAR wallet.
-          </p>
-        </div>
-
-        <section className="mt-7 border border-black bg-white p-5 sm:p-7">
+        <section className="mt-4">
         {!accountId ? (
-          <section className="rounded-xl border border-black bg-white p-5 sm:p-6">
-            <div className="flex flex-wrap items-center justify-between gap-5">
+          <section className="rounded-3xl border border-[#dde2ee] bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="max-w-xl">
-                <p className="text-xs font-black uppercase tracking-[0.2em]">
-              Wallet authorization required
-            </p>
-            <p className="mt-2 text-sm leading-6 text-neutral-600">
-              Connect a NEAR testnet wallet to approve this payment. You can
-              review the invoice and enter your details before connecting.
-            </p>
+                <p className="text-base font-black">
+                  Connect your wallet
+                </p>
+                <p className="mt-1 text-sm leading-5 text-[#6b7392]">
+                  Use your NEAR testnet wallet to authorize payment and load your history.
+                </p>
               </div>
             <button
               type="button"
               onClick={connectWallet}
               disabled={!selector || !walletModal}
-              className="w-full bg-black px-6 py-4 text-sm font-bold uppercase tracking-widest text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+              className="min-h-11 w-full rounded-xl bg-[#ff9f1c] px-5 py-3 text-sm font-bold text-[#121633] transition hover:bg-[#f39200] disabled:cursor-not-allowed disabled:bg-[#d6dae6] disabled:text-[#8a90a8] sm:w-auto"
             >
               {!selector || !walletModal
                 ? "Loading NEAR Wallets..."
                 : "Connect Meteor / NEAR Wallet"}
             </button>
             </div>
-            <div className="mt-7 border-t border-neutral-200 pt-5">
-              <p className="text-xs font-black uppercase tracking-[0.2em]">
-                New to NEAR?
-              </p>
-              <p className="mt-2 text-sm text-neutral-600">
-                Create a testnet wallet, then return here to connect it.
-              </p>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <details className="mt-4 border-t border-[#dde2ee] pt-3">
+              <summary className="cursor-pointer text-xs font-semibold text-[#6b7392]">
+                New to NEAR? Create a testnet wallet
+              </summary>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <a
                   href="https://testnet.mynearwallet.com"
                   target="_blank"
                   rel="noreferrer"
-                  className="border border-black px-4 py-3 text-center text-sm font-bold transition hover:bg-black hover:text-white"
+                  className="rounded-xl border border-[#dde2ee] px-3 py-2.5 text-center text-xs font-bold transition hover:border-[#ff9f1c] hover:bg-[#fff3dc]"
                 >
                   Sign Up with MyNearWallet
                 </a>
@@ -1276,137 +1246,93 @@ function PaymentPortal() {
                   href="https://wallet.meteorwallet.app/?network=testnet"
                   target="_blank"
                   rel="noreferrer"
-                  className="border border-black px-4 py-3 text-center text-sm font-bold transition hover:bg-black hover:text-white"
+                  className="rounded-xl border border-[#dde2ee] px-3 py-2.5 text-center text-xs font-bold transition hover:border-[#ff9f1c] hover:bg-[#fff3dc]"
                 >
                   Sign Up with Meteor Wallet
                 </a>
               </div>
-            </div>
+            </details>
           </section>
         ) : null}
         {accountId ? (
-          <div className="mt-5 grid gap-5 border border-black bg-white p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em]">
-                    <span
-                      aria-hidden="true"
-                      className="h-2.5 w-2.5 rounded-full bg-emerald-700"
-                    />
-                    Connected testnet wallet
-                  </p>
-                  <p className="mt-2 break-all font-mono text-sm font-semibold">
-                    {accountId}
-                  </p>
-                </div>
+          <div className="mt-4 rounded-3xl bg-gradient-to-br from-[#121633] to-[#1d2350] p-5 text-white shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+              <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+                <p className="flex items-center gap-2 text-xs font-medium text-[#b9c0ee]">
+                  <span aria-hidden="true" className="h-2 w-2 rounded-full bg-[#12b886] shadow-[0_0_0_4px_#12b88630]" />
+                  <span className="break-all">{accountId}</span>
+                </p>
                 <button
                   type="button"
                   onClick={() => void signOutWallet()}
                   disabled={isSigningOut}
-                  className="border border-black px-4 py-2 text-xs font-bold uppercase tracking-widest transition hover:bg-black hover:text-white disabled:opacity-50"
+                  className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-white/20 disabled:opacity-50"
                 >
                   {isSigningOut ? "Disconnecting..." : "Disconnect"}
                 </button>
               </div>
-              {walletBalanceError ? (
-                <p role="alert" className="mt-3 text-xs text-red-700">
-                  {walletBalanceError}
-                </p>
+            </div>
+            <p className="mt-5 text-xs text-[#9aa2d6]">Live NEAR balance</p>
+            <p className="mt-1 font-mono text-3xl font-black leading-tight text-[#ff9f1c] sm:text-[38px]">
+              {walletBalanceLoading && !currentWalletBalances
+                ? "Loading..."
+                : currentWalletBalances?.nearBalance ?? "—"}
+              <span className="ml-2 text-base font-bold">NEAR</span>
+            </p>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-white/15 pt-3 text-xs text-[#b9c0ee]">
+              <span>
+                USDC:{" "}
+                {walletBalanceLoading && !currentWalletBalances
+                  ? "Loading..."
+                  : currentWalletBalances?.usdcBalances.length
+                    ? currentWalletBalances.usdcBalances
+                        .map((token) => token.balance)
+                        .join(", ")
+                    : currentWalletBalances?.tokenWarning
+                      ? "Unavailable"
+                      : "none found"}
+              </span>
+              {currentWalletBalances?.explorerUrl ? (
+                <a
+                  href={currentWalletBalances.explorerUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-white underline underline-offset-2"
+                >
+                  View wallet on NEARBlocks
+                </a>
               ) : null}
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[27rem]">
-              <div className="border border-black p-3">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">
-                  Live NEAR balance · RPC
-                </p>
-                <p className="mt-2 font-mono text-xl font-black">
-                  {walletBalanceLoading && !currentWalletBalances
-                    ? "Loading..."
-                    : `${currentWalletBalances?.nearBalance ?? "—"} NEAR`}
-                </p>
-              </div>
-              <div className="border border-black p-3">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">
-                  USDC · testnet explorer
-                </p>
-                {currentWalletBalances?.usdcBalances.length ? (
-                  <div className="mt-2 space-y-1">
-                    {currentWalletBalances.usdcBalances.map((token) => (
-                      <p
-                        key={token.contractId}
-                        className="break-all font-mono text-sm font-bold"
-                      >
-                        {token.balance} USDC
-                        <a
-                          href={`https://testnet.nearblocks.io/address/${encodeURIComponent(token.contractId)}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="ml-2 text-[10px] font-semibold underline"
-                        >
-                          contract
-                        </a>
-                      </p>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="mt-2 text-sm font-bold">
-                    {walletBalanceLoading && !currentWalletBalances
-                      ? "Loading..."
-                      : currentWalletBalances?.tokenWarning
-                        ? "Temporarily unavailable"
-                        : "No USDC found"}
-                  </p>
-                )}
-                {currentWalletBalances?.explorerUrl ? (
-                  <a
-                    href={currentWalletBalances.explorerUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-1 inline-block text-[10px] font-semibold underline"
-                  >
-                    View wallet on NEARBlocks
-                  </a>
-                ) : null}
-                {currentWalletBalances?.tokenWarning ? (
-                  <p className="mt-2 text-[10px] leading-4 text-amber-900">
-                    {currentWalletBalances.tokenWarning}
-                  </p>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                onClick={() => void refreshWalletBalances()}
-                disabled={walletBalanceLoading}
-                className="border border-black px-3 py-2 text-xs font-bold uppercase tracking-wider transition hover:bg-black hover:text-white disabled:opacity-50 sm:col-span-2"
-              >
-                {walletBalanceLoading ? "Refreshing balances..." : "Refresh balances"}
-              </button>
-            </div>
+            {walletBalanceError ? (
+              <p role="alert" className="mt-3 text-xs text-red-200">
+                {walletBalanceError}
+              </p>
+            ) : currentWalletBalances?.tokenWarning ? (
+              <p className="mt-3 text-xs text-amber-200">
+                {currentWalletBalances.tokenWarning}
+              </p>
+            ) : null}
           </div>
         ) : null}
-        <div className="mt-6 grid items-start gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(340px,0.95fr)]">
+        <section
+          className="mt-4 space-y-4"
+        >
+          <div className="grid items-start gap-4">
         <section
           aria-labelledby="invoice-heading"
-          className="border border-black bg-white p-5 sm:p-6 lg:col-start-1 lg:row-start-1"
+          className="min-w-0 rounded-3xl border border-[#dde2ee] bg-white p-5 shadow-sm"
         >
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
-                Card 01
-              </p>
-              <h2 id="invoice-heading" className="mt-2 text-xl font-black tracking-tight">
-                Invoice &amp; live conversion
+              <h2 id="invoice-heading" className="text-xl font-black tracking-tight">
+                Scan to pay
               </h2>
-              <p className="mt-2 text-sm leading-6 text-neutral-600">
-                Review the merchant request, itemized total, and current token quote.
+              <p className="mt-1 text-[13px] leading-5 text-[#6b7392]">
+                Scan the merchant QR code or upload an image to load the bill.
               </p>
             </div>
-            <span className="hidden border border-neutral-300 px-2 py-1 text-[10px] font-bold uppercase tracking-widest sm:block">
-              QR checkout
-            </span>
           </div>
-          <div className="mt-5 grid grid-cols-2 border border-black p-1">
+          <div className="mt-4 grid grid-cols-2 rounded-[13px] bg-[#eef1f7] p-1">
             <button
               type="button"
               onClick={() => {
@@ -1414,10 +1340,10 @@ function PaymentPortal() {
                 setScannerError(null);
                 setIsCameraOpen(false);
               }}
-              className={`px-3 py-3 text-xs font-bold uppercase tracking-wider transition sm:text-sm ${
+              className={`min-h-10 px-2 py-2 text-[10px] font-bold uppercase tracking-wider transition sm:text-xs ${
                 scannerMode === "camera"
-                  ? "bg-black text-white"
-                  : "bg-white text-black hover:bg-neutral-100"
+                  ? "rounded-[10px] bg-[#121633] text-white"
+                  : "rounded-[10px] text-[#6b7392] hover:bg-white"
               }`}
               aria-pressed={scannerMode === "camera"}
             >
@@ -1431,10 +1357,10 @@ function PaymentPortal() {
                 setScannerError(null);
                 setScannerStatus("");
               }}
-              className={`px-3 py-3 text-xs font-bold uppercase tracking-wider transition sm:text-sm ${
+              className={`min-h-10 px-2 py-2 text-[10px] font-bold uppercase tracking-wider transition sm:text-xs ${
                 scannerMode === "upload"
-                  ? "bg-black text-white"
-                  : "bg-white text-black hover:bg-neutral-100"
+                  ? "rounded-[10px] bg-[#121633] text-white"
+                  : "rounded-[10px] text-[#6b7392] hover:bg-white"
               }`}
               aria-pressed={scannerMode === "upload"}
             >
@@ -1442,7 +1368,7 @@ function PaymentPortal() {
             </button>
           </div>
           {scannerMode === "camera" ? (
-            <div className="mt-5">
+            <div className="mt-3">
               {isCameraOpen ? (
                 <>
               <video
@@ -1451,7 +1377,7 @@ function PaymentPortal() {
                 playsInline
                 muted
                 aria-label="Live QR scanner camera preview"
-                className="aspect-video w-full border border-black bg-black object-cover"
+                className="aspect-video max-h-52 w-full border border-black bg-black object-cover"
               />
               <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                 <p aria-live="polite" className="text-xs text-neutral-600">
@@ -1470,9 +1396,9 @@ function PaymentPortal() {
               </div>
                 </>
               ) : (
-                <div className="border border-dashed border-neutral-400 bg-neutral-50 px-5 py-9 text-center">
+                <div className="rounded-[18px] border-2 border-dashed border-[#c4cbe2] bg-[#f8f9fd] px-4 py-6 text-center">
                   <p className="text-sm font-bold">Scan a merchant QR code</p>
-                  <p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-neutral-600">
+                  <p className="mx-auto mt-2 max-w-sm text-[13px] leading-5 text-[#6b7392]">
                     Allow camera access, then hold the QR code inside the
                     camera frame.
                   </p>
@@ -1488,7 +1414,7 @@ function PaymentPortal() {
                       paymentState === "signing" ||
                       paymentState === "verifying"
                     }
-                    className="mt-5 bg-black px-5 py-3 text-xs font-bold uppercase tracking-widest text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="mt-3 min-h-11 rounded-xl bg-[#121633] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#1d2350] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Start camera scan
                   </button>
@@ -1497,7 +1423,7 @@ function PaymentPortal() {
             </div>
           ) : null}
           {scannerMode === "upload" ? (
-            <label className="mt-5 flex min-h-44 cursor-pointer flex-col items-center justify-center border border-dashed border-neutral-400 bg-neutral-50 px-5 py-8 text-center transition hover:bg-neutral-100 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+            <label className="mt-3 flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-[18px] border-2 border-dashed border-[#c4cbe2] bg-[#f8f9fd] px-4 py-4 text-center transition hover:bg-[#eef1f7] has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
               <span className="text-sm font-bold">
                 {isDecodingImage ? "Reading QR image..." : "Choose QR screenshot"}
               </span>
@@ -1518,7 +1444,7 @@ function PaymentPortal() {
             </label>
           ) : null}
           {scannerStatus && !isCameraOpen ? (
-            <p role="status" className="mt-3 text-xs font-medium text-emerald-800">
+            <p role="status" className="mt-3 text-xs font-medium text-[#0c8a63]">
               {scannerStatus}
             </p>
           ) : null}
@@ -1527,30 +1453,30 @@ function PaymentPortal() {
               {scannerError}
             </p>
           ) : null}
-        <div className="mt-6 border-t border-neutral-200 pt-5">
+        <div className="mt-4 rounded-2xl border border-[#dde2ee] p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <p className="text-xs font-bold uppercase tracking-widest text-neutral-500">
+            <p className="text-sm font-bold">
               Merchant invoice
             </p>
-            <span className="border border-neutral-300 px-2 py-1 text-[10px] font-bold uppercase tracking-widest">
+            <span className="rounded-full bg-[#eef1f7] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#6b7392]">
               {hasInvoice ? "Ready to review" : "Awaiting QR"}
             </span>
           </div>
           {hasInvoice ? (
             <>
-              <div className="mt-5 border-y border-black py-5">
-                <p className="text-xs font-bold uppercase tracking-widest text-neutral-500">
+              <div className="mt-3 border-y border-[#dde2ee] py-3">
+                <p className="text-xs font-bold uppercase tracking-widest text-[#6b7392]">
                   Merchant
                 </p>
                 <p className="mt-2 text-lg font-black">
                   {invoice.storeName || "NEAR merchant"}
                 </p>
-                <p className="mt-1 break-all font-mono text-xs text-neutral-600">
+                <p className="mt-1 break-all font-mono text-xs text-[#6b7392]">
                   {merchant}
                 </p>
               </div>
               {invoice.items.length > 0 ? (
-                <ul className="divide-y divide-neutral-200">
+                <ul className="max-h-36 divide-y divide-[#dde2ee] overflow-y-auto">
                   {invoice.items.map((item, index) => (
                     <li
                       key={`${item.name}-${index}`}
@@ -1558,7 +1484,7 @@ function PaymentPortal() {
                     >
                       <span className="min-w-0">
                         <span className="block font-semibold">{item.name}</span>
-                        <span className="mt-1 block text-xs text-neutral-500">
+                        <span className="mt-1 block text-xs text-[#6b7392]">
                           Qty {item.quantity}
                         </span>
                       </span>
@@ -1572,31 +1498,31 @@ function PaymentPortal() {
                   ))}
                 </ul>
               ) : null}
-              <div className="mt-4 border border-black bg-neutral-50 p-4">
-                <p className="text-xs font-bold uppercase tracking-widest text-neutral-500">
+              <div className="mt-4 rounded-2xl bg-[#f8f9fd] p-4">
+                <p className="text-xs font-bold uppercase tracking-widest text-[#6b7392]">
                   Total · {fiatCurrency}
                 </p>
-                <p className="mt-2 text-3xl font-black tracking-tight">
+                <p className="mt-1 text-2xl font-black tracking-tight text-[#121633]">
                   {fiatCurrency} {fiatAmount || "—"}
                 </p>
               </div>
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <div className="border border-black p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className="rounded-xl border border-[#dde2ee] p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#6b7392]">
                     Pay on testnet
                   </p>
-                  <p className="mt-2 text-lg font-black">{amount} NEAR</p>
+                  <p className="mt-1 text-base font-black">{amount} NEAR</p>
                 </div>
-                <div className="border border-neutral-300 p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">
+                <div className="rounded-xl border border-[#dde2ee] p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#6b7392]">
                     Conversion quote
                   </p>
-                  <p className="mt-2 text-lg font-black">
+                  <p className="mt-1 text-base font-black">
                     {invoice.usdcAmount || "—"} USDC
                   </p>
                 </div>
               </div>
-              <div className="mt-4 border border-black p-4">
+              <div className="mt-3 rounded-xl border border-[#dde2ee] p-3">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs font-bold uppercase tracking-widest">
                     Live conversion
@@ -1610,11 +1536,11 @@ function PaymentPortal() {
                 {liveNearAmount && liveUsdcAmount ? (
                   <div className="mt-3 grid grid-cols-2 gap-3">
                     <p className="text-sm">
-                      <span className="block text-xs text-neutral-500">Indicative NEAR</span>
+                      <span className="block text-xs text-[#6b7392]">Indicative NEAR</span>
                       <span className="mt-1 block font-mono font-bold">{liveNearAmount} NEAR</span>
                     </p>
                     <p className="text-sm">
-                      <span className="block text-xs text-neutral-500">Indicative USDC</span>
+                      <span className="block text-xs text-[#6b7392]">Indicative USDC</span>
                       <span className="mt-1 block font-mono font-bold">{liveUsdcAmount} USDC</span>
                     </p>
                   </div>
@@ -1629,15 +1555,15 @@ function PaymentPortal() {
                   </p>
                 ) : null}
               </div>
-              <p className="mt-3 text-xs leading-5 text-neutral-500">
+              <p className="mt-3 text-xs leading-5 text-[#6b7392]">
                 The USDC amount is a conversion reference. This testnet checkout
                 currently transfers native NEAR only.
               </p>
             </>
           ) : (
-            <div className="mt-5 border border-dashed border-neutral-400 bg-neutral-50 px-5 py-10 text-center">
+            <div className="mt-5 rounded-[18px] border-2 border-dashed border-[#c4cbe2] bg-[#f8f9fd] px-5 py-10 text-center">
               <p className="text-sm font-bold">Your invoice will appear here</p>
-              <p className="mx-auto mt-2 max-w-xs text-xs leading-5 text-neutral-600">
+              <p className="mx-auto mt-2 max-w-xs text-xs leading-5 text-[#6b7392]">
                 Scan the merchant QR code or upload an image to load the amount
                 and payment details.
               </p>
@@ -1646,26 +1572,19 @@ function PaymentPortal() {
         </div>
         </section>
 
-          <section className="border border-black bg-white p-5 sm:p-6 lg:col-start-2 lg:row-start-1">
+          <section className="min-w-0 rounded-3xl border border-[#dde2ee] bg-white p-5 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
-                  Card 02
-                </p>
-                <h2 className="mt-2 text-xl font-black tracking-tight">
-                  Customer profile
+                <h2 className="text-xl font-black tracking-tight">
+                  Your details
                 </h2>
-                <p className="mt-2 text-xs leading-5 text-neutral-600">
-                  Enter your contact details for the receipt. You can do this
-                  before or after connecting your wallet.
+                <p className="mt-1 text-[13px] leading-5 text-[#6b7392]">
+                  Used for your receipt. Not saved in this browser.
                 </p>
               </div>
-              <span className="border border-neutral-300 px-2 py-1 text-[10px] font-bold uppercase tracking-widest">
-                {accountId ? (profileLoaded ? "Checkout details" : "Loading") : "Checkout"}
-              </span>
             </div>
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <label className="block text-xs font-bold uppercase tracking-widest sm:col-span-2">
+            <div className="mt-3">
+              <label className="mt-3 block text-xs font-bold text-[#6b7392]">
                 Name
                 <input
                   type="text"
@@ -1676,12 +1595,12 @@ function PaymentPortal() {
                     updateCustomerDetail("name", event.target.value)
                   }
                   disabled={!profileLoaded || paymentState === "signing" || paymentState === "verifying"}
-                  className="mt-2 w-full border border-neutral-300 px-4 py-3 text-sm font-normal normal-case tracking-normal outline-none focus:border-black disabled:bg-neutral-50"
+                  className="mt-1.5 min-h-11 w-full rounded-xl border border-[#dde2ee] px-3.5 py-3 text-sm font-normal normal-case tracking-normal outline-none focus:border-[#ff9f1c] focus:ring-2 focus:ring-[#ff9f1c]/20 disabled:bg-[#f8f9fd]"
                   placeholder="Your name"
                   required
                 />
               </label>
-              <label className="block text-xs font-bold uppercase tracking-widest">
+              <label className="mt-3 block text-xs font-bold text-[#6b7392]">
                 Email
                 <input
                   type="email"
@@ -1692,12 +1611,12 @@ function PaymentPortal() {
                     updateCustomerDetail("email", event.target.value)
                   }
                   disabled={!profileLoaded || paymentState === "signing" || paymentState === "verifying"}
-                  className="mt-2 w-full border border-neutral-300 px-4 py-3 text-sm font-normal normal-case tracking-normal outline-none focus:border-black disabled:bg-neutral-50"
+                  className="mt-1.5 min-h-11 w-full rounded-xl border border-[#dde2ee] px-3.5 py-3 text-sm font-normal normal-case tracking-normal outline-none focus:border-[#ff9f1c] focus:ring-2 focus:ring-[#ff9f1c]/20 disabled:bg-[#f8f9fd]"
                   placeholder="you@example.com"
                   required
                 />
               </label>
-              <label className="block text-xs font-bold uppercase tracking-widest">
+              <label className="mt-3 block text-xs font-bold text-[#6b7392]">
                 Mobile number
                 <input
                   type="tel"
@@ -1708,7 +1627,7 @@ function PaymentPortal() {
                     updateCustomerDetail("mobile", event.target.value)
                   }
                   disabled={!profileLoaded || paymentState === "signing" || paymentState === "verifying"}
-                  className="mt-2 w-full border border-neutral-300 px-4 py-3 text-sm font-normal normal-case tracking-normal outline-none focus:border-black disabled:bg-neutral-50"
+                  className="mt-1.5 min-h-11 w-full rounded-xl border border-[#dde2ee] px-3.5 py-3 text-sm font-normal normal-case tracking-normal outline-none focus:border-[#ff9f1c] focus:ring-2 focus:ring-[#ff9f1c]/20 disabled:bg-[#f8f9fd]"
                   placeholder="+91 98765 43210"
                   required
                 />
@@ -1718,59 +1637,56 @@ function PaymentPortal() {
               <p role="alert" className="mt-4 text-sm text-red-700">
                 {profileError}
               </p>
-            ) : customerDetailsError ? (
-              <p className="mt-4 text-sm text-neutral-600">
-                {customerDetailsError}
-              </p>
             ) : null}
-            <p className="mt-3 text-xs leading-5 text-neutral-500">
+            <p className="mt-3 text-xs leading-5 text-[#6b7392]">
               Your details are not saved in this browser. They are sent to the
               merchant with your wallet-authorized, verified payment.
             </p>
           </section>
-        
+          </div>
+
         {paymentState === "success" ? (
-          <section className="rounded-xl border border-emerald-700 bg-white p-5 sm:p-6 lg:col-start-2 lg:row-start-2">
+          <section className="rounded-3xl border border-[#dde2ee] bg-white p-5 shadow-sm">
             <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-lg font-black text-emerald-800">
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100 text-base font-black text-emerald-800">
                 ✓
               </span>
               <div>
-                <p className="text-xs font-bold uppercase tracking-widest text-neutral-500">
-                  Card 03 · Payment status
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[#6b7392]">
+                  Payment status
                 </p>
-                <h2 className="mt-1 text-xl font-black text-emerald-800">
+                <h2 className="mt-0.5 text-lg font-black text-[#0c8a63]">
                   Payment successfully paid
                 </h2>
               </div>
             </div>
             {historySaveError ? (
-              <p className="mt-4 border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900">
+              <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900">
                 Payment confirmed; invoice could not be saved yet.
               </p>
             ) : (
               <>
-                <p className="mt-4 border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">
+                <p className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">
                   Invoice generated
                 </p>
                 {invoiceNumber ? (
-                  <p className="mt-3 border border-neutral-300 px-3 py-2 font-mono text-sm font-bold">
+                  <p className="mt-3 rounded-xl border border-[#dde2ee] px-3 py-2 font-mono text-sm font-bold">
                     Invoice No: {invoiceNumber}
                   </p>
                 ) : null}
               </>
             )}
-            <p className="mt-6 text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
+            <p className="mt-4 text-[10px] font-bold uppercase tracking-[0.16em] text-neutral-500">
               Verified transaction hash
             </p>
             <p className="mt-2 break-all font-mono text-sm">
               {transactionHash}
             </p>
-            <div className="mt-5 flex flex-wrap items-center gap-4">
+            <div className="mt-3 flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 onClick={copyTransactionHash}
-                className="border border-black px-4 py-3 text-xs font-bold uppercase tracking-wider transition hover:bg-black hover:text-white"
+                className="min-h-10 rounded-xl border border-[#dde2ee] px-3 py-2 text-xs font-bold uppercase tracking-wider transition hover:border-[#ff9f1c] hover:bg-[#fff3dc]"
               >
                 Copy hash
               </button>
@@ -1809,7 +1725,7 @@ function PaymentPortal() {
                     }
                   }}
                   disabled={!isWalletReady}
-                  className="mt-3 border border-black px-4 py-2 text-sm font-bold transition hover:bg-black hover:text-white disabled:opacity-50"
+                  className="mt-3 rounded-xl border border-[#dde2ee] px-4 py-2 text-sm font-bold transition hover:border-[#ff9f1c] hover:bg-[#fff3dc] disabled:opacity-50"
                 >
                   Retry merchant history sync
                 </button>
@@ -1817,20 +1733,29 @@ function PaymentPortal() {
             ) : null}
           </section>
         ) : (
-          <section className="border border-black bg-white p-5 sm:p-6 lg:col-start-2 lg:row-start-2">
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
-              Card 03
-            </p>
-            <h2 className="mt-2 text-xl font-black tracking-tight">
-              Payment &amp; status
-            </h2>
-            {invoiceError ? (
-              <p role="alert" className="mt-4 border border-red-300 bg-red-50 p-3 text-sm text-red-800">
-                {invoiceError}
-              </p>
-            ) : null}
+          <section className="rounded-3xl border border-[#dde2ee] bg-white p-5 shadow-sm">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-neutral-500">
+                  Payment
+                </p>
+                <p className="text-lg font-black">
+                  {fiatCurrency} {fiatAmount || "—"}
+                  {hasInvoice ? (
+                    <span className="ml-2 font-mono text-xs font-semibold">
+                      {amount} NEAR
+                    </span>
+                  ) : null}
+                </p>
+              </div>
+              {invoiceError ? (
+                <span role="alert" className="max-w-[52%] text-right text-[10px] leading-4 text-red-700">
+                  {invoiceError}
+                </span>
+              ) : null}
+            </div>
             {visibleError ? (
-              <p role="alert" className="mt-4 border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+              <p role="alert" className="mb-3 rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-800">
                 {visibleError}
               </p>
             ) : null}
@@ -1856,7 +1781,7 @@ function PaymentPortal() {
                     paymentState === "verifying"
                   : !selector || !walletModal)
               }
-              className="mt-5 w-full bg-black px-6 py-4 text-sm font-bold uppercase tracking-widest text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-h-12 w-full rounded-[14px] bg-[#ff9f1c] px-5 py-3.5 text-base font-bold text-[#121633] transition hover:bg-[#f39200] disabled:cursor-not-allowed disabled:bg-[#d6dae6] disabled:text-[#8a90a8]"
             >
               {!hasInvoice
                 ? "Load invoice to continue"
@@ -1870,12 +1795,12 @@ function PaymentPortal() {
                         ? "Preparing wallet..."
                         : "Approve & Pay"}
             </button>
-            <p className="mt-3 text-center text-xs leading-5 text-neutral-500">
+            <p className="mt-2 text-center text-xs leading-5 text-[#6b7392]">
               Review the merchant and amount in your NEAR wallet before
               approving. Payment is sent on NEAR testnet.
             </p>
             {paymentState === "signing" || paymentState === "verifying" ? (
-              <p role="status" className="mt-4 border border-neutral-300 p-3 text-center text-xs font-semibold">
+              <p role="status" className="mt-3 rounded-xl border border-[#dde2ee] p-3 text-center text-xs font-semibold">
                 {paymentState === "signing"
                   ? "Complete the approval in your wallet."
                   : "Confirming your payment on the NEAR network..."}
@@ -1883,48 +1808,54 @@ function PaymentPortal() {
             ) : null}
           </section>
         )}
+        </section>
         <section
+          id="history-panel"
           aria-labelledby="history-heading"
-          className="border border-black bg-white p-5 sm:p-6 lg:col-span-2"
+          className="mt-4 rounded-3xl border border-[#dde2ee] bg-white p-5 shadow-sm"
         >
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
-                Card 04
-              </p>
-              <h2 id="history-heading" className="mt-2 text-xl font-black tracking-tight">
-                Your transaction history
+              <h2 id="history-heading" className="text-xl font-black tracking-tight">
+                Transaction history
               </h2>
-              <p className="mt-2 text-sm text-neutral-600">
-                Verified payments linked to this connected wallet.
+              <p className="mt-1 text-[13px] text-[#6b7392]">
+                Verified payments from this wallet.
               </p>
             </div>
-            {accountId ? (
-              <button
-                type="button"
-                onClick={() => void refreshCustomerHistory()}
-                disabled={historyLoading || !isWalletReady}
-                className="border border-black px-4 py-2 text-xs font-bold uppercase tracking-wider transition hover:bg-black hover:text-white disabled:opacity-50"
-              >
-                {historyLoading ? "Refreshing history..." : "Refresh history"}
-              </button>
+            {historyLoading ? (
+              <span role="status" className="text-xs font-bold text-[#6b7392]">
+                Loading securely...
+              </span>
             ) : null}
           </div>
           {historyError ? (
-            <p role="alert" className="mt-5 border border-red-300 bg-red-50 p-3 text-sm text-red-800">
-              {historyError}
-            </p>
+            <div className="mt-4">
+              <p role="alert" className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+                {historyError}
+              </p>
+              {accountId && isWalletReady ? (
+                <button
+                  type="button"
+                  onClick={() => void refreshCustomerHistory()}
+                  disabled={historyLoading}
+                  className="mt-3 min-h-10 rounded-xl border border-[#dde2ee] px-3 py-2 text-xs font-bold uppercase tracking-wider transition hover:border-[#ff9f1c] hover:bg-[#fff3dc] disabled:opacity-50"
+                >
+                  Retry secure history load
+                </button>
+              ) : null}
+            </div>
           ) : null}
           {!accountId ? (
-            <p className="mt-5 border border-dashed border-neutral-400 p-5 text-sm text-neutral-600">
+            <p className="mt-5 rounded-xl border border-dashed border-[#c4cbe2] bg-[#f8f9fd] p-5 text-sm text-[#6b7392]">
               Connect your NEAR wallet to securely load your previous payments.
             </p>
           ) : historyLoading && visibleCustomerHistory.length === 0 ? (
-            <p role="status" className="mt-5 border border-neutral-300 p-5 text-sm text-neutral-600">
+            <p role="status" className="mt-5 rounded-xl border border-[#dde2ee] p-5 text-sm text-[#6b7392]">
               Signing a wallet request and loading your payments...
             </p>
           ) : visibleCustomerHistory.length > 0 ? (
-            <ul className="mt-5 divide-y divide-neutral-200 border-y border-neutral-200">
+            <ul className="mt-4 divide-y divide-[#dde2ee]">
               {visibleCustomerHistory.map((record, index) => (
                 <li
                   key={
@@ -1938,21 +1869,21 @@ function PaymentPortal() {
                       <p className="font-mono text-xs font-bold">
                         {record.invoiceNumber ?? "Payment"}
                       </p>
-                      <span className="border border-emerald-700 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+                      <span className="rounded-full bg-[#dcf7ec] px-2.5 py-1 text-[10px] font-bold text-[#0c8a63]">
                         {record.status}
                       </span>
                     </div>
                     <p className="mt-1 text-sm font-semibold">
                       {record.storeName || record.merchantAccountId || "NEAR merchant"}
                     </p>
-                    <p className="mt-1 text-xs text-neutral-600">
+                    <p                     className="mt-1 text-xs text-[#6b7392]">
                       {new Date(record.date).toLocaleString("en-IN", {
                         dateStyle: "medium",
                         timeStyle: "short",
                       })}
                     </p>
                     {record.transactionHash ? (
-                      <p className="mt-2 break-all font-mono text-[10px] text-neutral-500">
+                      <p className="mt-2 break-all font-mono text-[10px] text-[#6b7392]">
                         {record.transactionHash}
                       </p>
                     ) : null}
@@ -1965,7 +1896,7 @@ function PaymentPortal() {
                       <>
                         <a
                           href={`/pos/receipt/${encodeURIComponent(record.transactionHash)}`}
-                          className="text-xs font-bold underline underline-offset-4"
+                          className="text-xs font-bold text-[#1d2350] underline underline-offset-4"
                         >
                           View invoice
                         </a>
@@ -1973,7 +1904,7 @@ function PaymentPortal() {
                           href={`https://testnet.nearblocks.io/txns/${encodeURIComponent(record.transactionHash)}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-xs font-bold underline underline-offset-4"
+                          className="text-xs font-bold text-[#1d2350] underline underline-offset-4"
                         >
                           Explorer
                         </a>
@@ -1984,14 +1915,13 @@ function PaymentPortal() {
               ))}
             </ul>
           ) : (
-            <p className="mt-5 border border-dashed border-neutral-400 p-5 text-sm text-neutral-600">
+            <p className="mt-5 rounded-xl border border-dashed border-[#c4cbe2] bg-[#f8f9fd] p-5 text-sm text-[#6b7392]">
               {historyLoading
                 ? "Loading your verified payments..."
                 : "No verified payments were found for this wallet."}
             </p>
           )}
         </section>
-        </div>
         </section>
       </div>
     </main>
