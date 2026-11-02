@@ -19,10 +19,18 @@ import { JsonRpcProvider } from "near-api-js";
 import type { IScannerControls } from "@zxing/browser";
 import { isValidNearAccountId } from "../../lib/merchant-settings";
 import {
+  isPaymentRecord,
   isReceiptItem,
+  type PaymentRecord,
   type ReceiptItem,
 } from "../../lib/payment-history";
-import type { PaymentToken } from "../../lib/token-rates";
+import {
+  calculateTokenAmount,
+  fetchTokenRates,
+  formatTokenAmount,
+  type PaymentToken,
+  type TokenRates,
+} from "../../lib/token-rates";
 import { getWalletSelector } from "../../lib/near-wallet-selector";
 import {
   emptyCustomerProfile,
@@ -49,6 +57,52 @@ type PaymentInvoice = {
   acceptedTokens: PaymentToken[];
   items: ReceiptItem[];
 };
+
+type WalletBalanceResult = {
+  accountId: string;
+  nearBalance: string;
+  usdcBalances: Array<{ balance: string; contractId: string }>;
+  tokenWarning: string | null;
+  fetchedAt: string;
+  explorerUrl: string;
+};
+
+function readApiError(value: unknown, fallback: string): string {
+  return typeof value === "object" &&
+    value !== null &&
+    "error" in value &&
+    typeof value.error === "string"
+    ? value.error
+    : fallback;
+}
+
+function isWalletBalanceResult(value: unknown): value is WalletBalanceResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "accountId" in value &&
+    typeof value.accountId === "string" &&
+    "nearBalance" in value &&
+    typeof value.nearBalance === "string" &&
+    "usdcBalances" in value &&
+    Array.isArray(value.usdcBalances) &&
+    value.usdcBalances.every(
+      (token) =>
+        typeof token === "object" &&
+        token !== null &&
+        "balance" in token &&
+        typeof token.balance === "string" &&
+        "contractId" in token &&
+        typeof token.contractId === "string",
+    ) &&
+    "tokenWarning" in value &&
+    (value.tokenWarning === null || typeof value.tokenWarning === "string") &&
+    "fetchedAt" in value &&
+    typeof value.fetchedAt === "string" &&
+    "explorerUrl" in value &&
+    typeof value.explorerUrl === "string"
+  );
+}
 
 function getInvoiceFromParams(
   searchParams: ReturnType<typeof useSearchParams>,
@@ -275,6 +329,18 @@ function PaymentPortal() {
     useState<CustomerProfile>(emptyCustomerProfile);
   const [profileAccountId, setProfileAccountId] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [walletBalances, setWalletBalances] =
+    useState<WalletBalanceResult | null>(null);
+  const [walletBalanceError, setWalletBalanceError] = useState<string | null>(
+    null,
+  );
+  const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
+  const [customerHistory, setCustomerHistory] = useState<PaymentRecord[]>([]);
+  const [historyAccountId, setHistoryAccountId] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [tokenRates, setTokenRates] = useState<TokenRates | null>(null);
+  const [tokenRatesError, setTokenRatesError] = useState<string | null>(null);
   const [paymentState, setPaymentState] = useState<PaymentState>("pending");
   const [transactionHash, setTransactionHash] = useState("");
   const [invoiceNumber, setInvoiceNumber] = useState("");
@@ -298,6 +364,181 @@ function PaymentPortal() {
 
   const profileLoaded =
     accountId === null || profileAccountId === accountId;
+
+  const refreshWalletBalances = useCallback(async () => {
+    if (!accountId) {
+      setWalletBalances(null);
+      setWalletBalanceError(null);
+      return;
+    }
+
+    setWalletBalanceLoading(true);
+    setWalletBalanceError(null);
+    try {
+      const response = await fetch(
+        `/api/wallet-balance?accountId=${encodeURIComponent(accountId)}`,
+        { cache: "no-store" },
+      );
+      const result: unknown = await response.json();
+      if (!response.ok || !isWalletBalanceResult(result) || result.accountId !== accountId) {
+        throw new Error(
+          readApiError(result, "The wallet balance service returned an invalid response."),
+        );
+      }
+
+      if (activeAccountIdRef.current === accountId) {
+        setWalletBalances(result);
+      }
+    } catch (error) {
+      console.error("Unable to load the connected wallet's live balance.", error);
+      if (activeAccountIdRef.current === accountId) {
+        setWalletBalanceError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load the connected wallet's live balance.",
+        );
+      }
+    } finally {
+      setWalletBalanceLoading(false);
+    }
+  }, [accountId]);
+
+  const refreshCustomerHistory = useCallback(async () => {
+    const connectedWallet = walletRef.current;
+    if (!accountId || !isWalletReady || !connectedWallet) {
+      setCustomerHistory([]);
+      setHistoryAccountId(null);
+      return;
+    }
+
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      if (!connectedWallet.signMessage) {
+        throw new Error(
+          "This wallet cannot sign the authorization needed to load payment history.",
+        );
+      }
+      const challengeResponse = await fetch("/api/wallet-challenge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountId,
+          purpose: "merchant-history",
+        }),
+      });
+      const challenge: unknown = await challengeResponse.json();
+      if (
+        !challengeResponse.ok ||
+        typeof challenge !== "object" ||
+        challenge === null ||
+        !("challengeId" in challenge) ||
+        typeof challenge.challengeId !== "string" ||
+        !("message" in challenge) ||
+        typeof challenge.message !== "string" ||
+        !("nonce" in challenge) ||
+        typeof challenge.nonce !== "string" ||
+        !("recipient" in challenge) ||
+        typeof challenge.recipient !== "string"
+      ) {
+        throw new Error(
+          readApiError(challenge, "Could not authorize customer history access."),
+        );
+      }
+
+      const signedMessage = await connectedWallet.signMessage({
+        message: challenge.message,
+        nonce: Buffer.from(challenge.nonce, "base64"),
+        recipient: challenge.recipient,
+      });
+      if (!signedMessage) {
+        throw new Error("The wallet did not return a history authorization signature.");
+      }
+
+      const response = await fetch("/api/customer-history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountId,
+          challengeId: challenge.challengeId,
+          signedMessage,
+        }),
+      });
+      const result: unknown = await response.json();
+      if (
+        !response.ok ||
+        typeof result !== "object" ||
+        result === null ||
+        !("records" in result) ||
+        !Array.isArray(result.records) ||
+        !result.records.every(isPaymentRecord)
+      ) {
+        throw new Error(
+          readApiError(result, "Customer transaction history could not be loaded."),
+        );
+      }
+
+      if (activeAccountIdRef.current === accountId) {
+        setCustomerHistory(result.records);
+        setHistoryAccountId(accountId);
+      }
+    } catch (error) {
+      console.error("Unable to load the customer's secured payment history.", error);
+      if (activeAccountIdRef.current === accountId) {
+        setHistoryError(
+          error instanceof Error
+            ? error.message
+            : "Customer transaction history could not be loaded.",
+        );
+      }
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [accountId, isWalletReady]);
+
+  const refreshConversionRates = useCallback(async () => {
+    try {
+      const rates = await fetchTokenRates();
+      setTokenRates(rates);
+      setTokenRatesError(rates.warning ?? null);
+    } catch (error) {
+      console.error("Unable to load live customer conversion rates.", error);
+      setTokenRatesError(
+        error instanceof Error
+          ? error.message
+          : "Live token conversion is currently unavailable.",
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshConversionRates();
+    const intervalId = setInterval(() => {
+      void refreshConversionRates();
+    }, 60_000);
+    return () => clearInterval(intervalId);
+  }, [refreshConversionRates]);
+
+  useEffect(() => {
+    void refreshWalletBalances();
+    if (!accountId) {
+      return;
+    }
+    const intervalId = setInterval(() => {
+      void refreshWalletBalances();
+    }, 60_000);
+    return () => clearInterval(intervalId);
+  }, [accountId, refreshWalletBalances]);
+
+  useEffect(() => {
+    if (accountId && isWalletReady) {
+      void refreshCustomerHistory();
+    } else {
+      setCustomerHistory([]);
+      setHistoryAccountId(null);
+      setHistoryError(null);
+    }
+  }, [accountId, isWalletReady, refreshCustomerHistory]);
 
   function updateCustomerDetail(
     field: keyof CustomerProfile,
@@ -477,7 +718,6 @@ function PaymentPortal() {
     async (hash: string, signerId: string) => {
       setPaymentState("verifying");
       setErrorMessage(null);
-
       try {
         const provider = new JsonRpcProvider({
           url: "https://rpc.testnet.near.org",
@@ -513,6 +753,7 @@ function PaymentPortal() {
           );
         }
 
+        let historySaved = false;
         try {
           const wallet = walletRef.current;
           if (!wallet?.signMessage) {
@@ -636,6 +877,7 @@ function PaymentPortal() {
           }
           setInvoiceNumber(persistResult.record.invoiceNumber);
           setHistorySaveError(null);
+          historySaved = true;
         } catch (error) {
           console.error(
             "Unable to securely synchronize the verified customer payment.",
@@ -650,6 +892,9 @@ function PaymentPortal() {
 
         setTransactionHash(hash);
         setPaymentState("success");
+        if (historySaved) {
+          void refreshCustomerHistory();
+        }
       } catch (error) {
         console.error("NEAR testnet payment verification failed.", error);
         setPaymentState("error");
@@ -668,6 +913,7 @@ function PaymentPortal() {
       fiatCurrency,
       invoice,
       merchant,
+      refreshCustomerHistory,
     ],
   );
 
@@ -918,12 +1164,39 @@ function PaymentPortal() {
       : !invoice.acceptedTokens.includes("NEAR")
         ? "This invoice does not accept native NEAR, the only payment token available on testnet."
       : null;
+  const liveFiatAmount = Number(fiatAmount);
+  const liveNearAmount =
+    tokenRates && Number.isFinite(liveFiatAmount) && liveFiatAmount > 0
+      ? formatTokenAmount(
+          calculateTokenAmount(
+            liveFiatAmount,
+            fiatCurrency,
+            "NEAR",
+            tokenRates,
+          ),
+        )
+      : null;
+  const liveUsdcAmount =
+    tokenRates && Number.isFinite(liveFiatAmount) && liveFiatAmount > 0
+      ? formatTokenAmount(
+          calculateTokenAmount(
+            liveFiatAmount,
+            fiatCurrency,
+            "USDC",
+            tokenRates,
+          ),
+        )
+      : null;
   const visibleError = callbackError
     ? `Wallet connection or payment failed: ${callbackError}`
     : errorMessage;
+  const currentWalletBalances =
+    walletBalances?.accountId === accountId ? walletBalances : null;
+  const visibleCustomerHistory =
+    historyAccountId === accountId ? customerHistory : [];
 
   return (
-    <main className="min-h-screen bg-[#f4f4f1] px-4 py-6 font-sans text-black sm:px-6 sm:py-10">
+    <main className="min-h-screen bg-white px-4 py-6 font-sans text-black sm:px-6 sm:py-10">
       <div className="mx-auto max-w-7xl">
         <header className="flex flex-wrap items-center justify-between gap-5 border-b border-black pb-6">
           <div className="flex items-center gap-4">
@@ -959,7 +1232,7 @@ function PaymentPortal() {
           </p>
         </div>
 
-        <section className="mt-7 border border-black bg-white p-5 shadow-[4px_4px_0_0_#111] sm:p-7">
+        <section className="mt-7 border border-black bg-white p-5 sm:p-7">
         {!accountId ? (
           <section className="rounded-xl border border-black bg-white p-5 sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-5">
@@ -1012,41 +1285,121 @@ function PaymentPortal() {
           </section>
         ) : null}
         {accountId ? (
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-4 border border-black bg-neutral-50 p-4">
+          <div className="mt-5 grid gap-5 border border-black bg-white p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
             <div className="min-w-0">
-              <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em]">
-                <span
-                  aria-hidden="true"
-                  className="h-2.5 w-2.5 rounded-full bg-green-600"
-                />
-                Wallet connected
-              </p>
-              <p className="mt-2 break-all font-mono text-sm font-semibold">
-                {accountId}
-              </p>
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em]">
+                    <span
+                      aria-hidden="true"
+                      className="h-2.5 w-2.5 rounded-full bg-emerald-700"
+                    />
+                    Connected testnet wallet
+                  </p>
+                  <p className="mt-2 break-all font-mono text-sm font-semibold">
+                    {accountId}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void signOutWallet()}
+                  disabled={isSigningOut}
+                  className="border border-black px-4 py-2 text-xs font-bold uppercase tracking-widest transition hover:bg-black hover:text-white disabled:opacity-50"
+                >
+                  {isSigningOut ? "Disconnecting..." : "Disconnect"}
+                </button>
+              </div>
+              {walletBalanceError ? (
+                <p role="alert" className="mt-3 text-xs text-red-700">
+                  {walletBalanceError}
+                </p>
+              ) : null}
             </div>
-            <button
-              type="button"
-              onClick={() => void signOutWallet()}
-              disabled={isSigningOut}
-              className="border border-black px-4 py-2 text-xs font-bold uppercase tracking-widest transition hover:bg-black hover:text-white disabled:opacity-50"
-            >
-              {isSigningOut ? "Signing out..." : "Sign Out"}
-            </button>
+            <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[27rem]">
+              <div className="border border-black p-3">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">
+                  Live NEAR balance · RPC
+                </p>
+                <p className="mt-2 font-mono text-xl font-black">
+                  {walletBalanceLoading && !currentWalletBalances
+                    ? "Loading..."
+                    : `${currentWalletBalances?.nearBalance ?? "—"} NEAR`}
+                </p>
+              </div>
+              <div className="border border-black p-3">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">
+                  USDC · testnet explorer
+                </p>
+                {currentWalletBalances?.usdcBalances.length ? (
+                  <div className="mt-2 space-y-1">
+                    {currentWalletBalances.usdcBalances.map((token) => (
+                      <p
+                        key={token.contractId}
+                        className="break-all font-mono text-sm font-bold"
+                      >
+                        {token.balance} USDC
+                        <a
+                          href={`https://testnet.nearblocks.io/address/${encodeURIComponent(token.contractId)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="ml-2 text-[10px] font-semibold underline"
+                        >
+                          contract
+                        </a>
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm font-bold">
+                    {walletBalanceLoading && !currentWalletBalances
+                      ? "Loading..."
+                      : currentWalletBalances?.tokenWarning
+                        ? "Temporarily unavailable"
+                        : "No USDC found"}
+                  </p>
+                )}
+                {currentWalletBalances?.explorerUrl ? (
+                  <a
+                    href={currentWalletBalances.explorerUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-block text-[10px] font-semibold underline"
+                  >
+                    View wallet on NEARBlocks
+                  </a>
+                ) : null}
+                {currentWalletBalances?.tokenWarning ? (
+                  <p className="mt-2 text-[10px] leading-4 text-amber-900">
+                    {currentWalletBalances.tokenWarning}
+                  </p>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => void refreshWalletBalances()}
+                disabled={walletBalanceLoading}
+                className="border border-black px-3 py-2 text-xs font-bold uppercase tracking-wider transition hover:bg-black hover:text-white disabled:opacity-50 sm:col-span-2"
+              >
+                {walletBalanceLoading ? "Refreshing balances..." : "Refresh balances"}
+              </button>
+            </div>
           </div>
         ) : null}
-        <div className="mt-6 grid items-start gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(340px,0.85fr)]">
-        <section className="rounded-xl border border-black bg-white p-5 sm:p-6 lg:col-start-1 lg:row-start-1">
+        <div className="mt-6 grid items-start gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(340px,0.95fr)]">
+        <section
+          aria-labelledby="invoice-heading"
+          className="border border-black bg-white p-5 sm:p-6 lg:col-start-1 lg:row-start-1"
+        >
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
-                Step 01
+                Card 01
               </p>
-              <h2 className="mt-2 text-xl font-black tracking-tight">
-                Load payment request
+              <h2 id="invoice-heading" className="mt-2 text-xl font-black tracking-tight">
+                Invoice &amp; live conversion
               </h2>
               <p className="mt-2 text-sm leading-6 text-neutral-600">
-                Scan the merchant QR code or choose an image from your device.
+                Review the merchant request, itemized total, and current token quote.
               </p>
             </div>
             <span className="hidden border border-neutral-300 px-2 py-1 text-[10px] font-bold uppercase tracking-widest sm:block">
@@ -1174,18 +1527,11 @@ function PaymentPortal() {
               {scannerError}
             </p>
           ) : null}
-        </section>
-
-        <section className="rounded-xl border border-black bg-white p-5 sm:p-6 lg:col-start-2 lg:row-start-1">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
-                Step 02
-              </p>
-              <h2 className="mt-2 text-xl font-black tracking-tight">
-                Invoice summary
-              </h2>
-            </div>
+        <div className="mt-6 border-t border-neutral-200 pt-5">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="text-xs font-bold uppercase tracking-widest text-neutral-500">
+              Merchant invoice
+            </p>
             <span className="border border-neutral-300 px-2 py-1 text-[10px] font-bold uppercase tracking-widest">
               {hasInvoice ? "Ready to review" : "Awaiting QR"}
             </span>
@@ -1250,6 +1596,39 @@ function PaymentPortal() {
                   </p>
                 </div>
               </div>
+              <div className="mt-4 border border-black p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-bold uppercase tracking-widest">
+                    Live conversion
+                  </p>
+                  {tokenRates ? (
+                    <p className="text-[10px] text-neutral-500">
+                      Updated {new Date(tokenRates.fetchedAt).toLocaleTimeString()}
+                    </p>
+                  ) : null}
+                </div>
+                {liveNearAmount && liveUsdcAmount ? (
+                  <div className="mt-3 grid grid-cols-2 gap-3">
+                    <p className="text-sm">
+                      <span className="block text-xs text-neutral-500">Indicative NEAR</span>
+                      <span className="mt-1 block font-mono font-bold">{liveNearAmount} NEAR</span>
+                    </p>
+                    <p className="text-sm">
+                      <span className="block text-xs text-neutral-500">Indicative USDC</span>
+                      <span className="mt-1 block font-mono font-bold">{liveUsdcAmount} USDC</span>
+                    </p>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-neutral-600">
+                    {tokenRatesError || "Live conversion is loading."}
+                  </p>
+                )}
+                {tokenRates?.stale ? (
+                  <p className="mt-2 text-xs text-amber-900">
+                    Rates are temporarily stale; confirm the amount shown in your wallet.
+                  </p>
+                ) : null}
+              </div>
               <p className="mt-3 text-xs leading-5 text-neutral-500">
                 The USDC amount is a conversion reference. This testnet checkout
                 currently transfers native NEAR only.
@@ -1264,16 +1643,17 @@ function PaymentPortal() {
               </p>
             </div>
           )}
+        </div>
         </section>
 
-          <section className="rounded-xl border border-black bg-white p-5 sm:p-6 lg:col-start-1 lg:row-start-2">
+          <section className="border border-black bg-white p-5 sm:p-6 lg:col-start-2 lg:row-start-1">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
-                  Step 03
+                  Card 02
                 </p>
                 <h2 className="mt-2 text-xl font-black tracking-tight">
-                  Your details
+                  Customer profile
                 </h2>
                 <p className="mt-2 text-xs leading-5 text-neutral-600">
                   Enter your contact details for the receipt. You can do this
@@ -1356,10 +1736,12 @@ function PaymentPortal() {
                 ✓
               </span>
               <div>
-                <p className="text-xs font-bold uppercase tracking-widest text-emerald-800">
-                  Payment complete
+                <p className="text-xs font-bold uppercase tracking-widest text-neutral-500">
+                  Card 03 · Payment status
                 </p>
-                <h2 className="mt-1 text-xl font-black">Payment successfully paid</h2>
+                <h2 className="mt-1 text-xl font-black text-emerald-800">
+                  Payment successfully paid
+                </h2>
               </div>
             </div>
             {historySaveError ? (
@@ -1435,12 +1817,12 @@ function PaymentPortal() {
             ) : null}
           </section>
         ) : (
-          <section className="rounded-xl border border-black bg-white p-5 sm:p-6 lg:col-start-2 lg:row-start-2">
+          <section className="border border-black bg-white p-5 sm:p-6 lg:col-start-2 lg:row-start-2">
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
-              Step 04
+              Card 03
             </p>
             <h2 className="mt-2 text-xl font-black tracking-tight">
-              Secure payment
+              Payment &amp; status
             </h2>
             {invoiceError ? (
               <p role="alert" className="mt-4 border border-red-300 bg-red-50 p-3 text-sm text-red-800">
@@ -1501,6 +1883,114 @@ function PaymentPortal() {
             ) : null}
           </section>
         )}
+        <section
+          aria-labelledby="history-heading"
+          className="border border-black bg-white p-5 sm:p-6 lg:col-span-2"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
+                Card 04
+              </p>
+              <h2 id="history-heading" className="mt-2 text-xl font-black tracking-tight">
+                Your transaction history
+              </h2>
+              <p className="mt-2 text-sm text-neutral-600">
+                Verified payments linked to this connected wallet.
+              </p>
+            </div>
+            {accountId ? (
+              <button
+                type="button"
+                onClick={() => void refreshCustomerHistory()}
+                disabled={historyLoading || !isWalletReady}
+                className="border border-black px-4 py-2 text-xs font-bold uppercase tracking-wider transition hover:bg-black hover:text-white disabled:opacity-50"
+              >
+                {historyLoading ? "Refreshing history..." : "Refresh history"}
+              </button>
+            ) : null}
+          </div>
+          {historyError ? (
+            <p role="alert" className="mt-5 border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+              {historyError}
+            </p>
+          ) : null}
+          {!accountId ? (
+            <p className="mt-5 border border-dashed border-neutral-400 p-5 text-sm text-neutral-600">
+              Connect your NEAR wallet to securely load your previous payments.
+            </p>
+          ) : historyLoading && visibleCustomerHistory.length === 0 ? (
+            <p role="status" className="mt-5 border border-neutral-300 p-5 text-sm text-neutral-600">
+              Signing a wallet request and loading your payments...
+            </p>
+          ) : visibleCustomerHistory.length > 0 ? (
+            <ul className="mt-5 divide-y divide-neutral-200 border-y border-neutral-200">
+              {visibleCustomerHistory.map((record, index) => (
+                <li
+                  key={
+                    record.transactionHash ??
+                    `${record.date}-${record.fiatAmount}-${index}`
+                  }
+                  className="grid gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-mono text-xs font-bold">
+                        {record.invoiceNumber ?? "Payment"}
+                      </p>
+                      <span className="border border-emerald-700 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+                        {record.status}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm font-semibold">
+                      {record.storeName || record.merchantAccountId || "NEAR merchant"}
+                    </p>
+                    <p className="mt-1 text-xs text-neutral-600">
+                      {new Date(record.date).toLocaleString("en-IN", {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })}
+                    </p>
+                    {record.transactionHash ? (
+                      <p className="mt-2 break-all font-mono text-[10px] text-neutral-500">
+                        {record.transactionHash}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:justify-end">
+                    <p className="text-sm font-black">
+                      {record.fiatCurrency ?? "INR"} {record.fiatAmount}
+                    </p>
+                    {record.transactionHash ? (
+                      <>
+                        <a
+                          href={`/pos/receipt/${encodeURIComponent(record.transactionHash)}`}
+                          className="text-xs font-bold underline underline-offset-4"
+                        >
+                          View invoice
+                        </a>
+                        <a
+                          href={`https://testnet.nearblocks.io/txns/${encodeURIComponent(record.transactionHash)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs font-bold underline underline-offset-4"
+                        >
+                          Explorer
+                        </a>
+                      </>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-5 border border-dashed border-neutral-400 p-5 text-sm text-neutral-600">
+              {historyLoading
+                ? "Loading your verified payments..."
+                : "No verified payments were found for this wallet."}
+            </p>
+          )}
+        </section>
         </div>
         </section>
       </div>
