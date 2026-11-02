@@ -19,7 +19,7 @@ To enable cross-device merchant history:
 5. Restart local Next.js after editing `.env.local`. Vercel needs a new deployment after environment variables change.
 6. After a successful payment, the customer signs the receipt authorization. A merchant connects the configured wallet on the History page and selects **Sync shared history**.
 
-Set all four variables in Vercel → **Project → Settings → Environment Variables** and redeploy. The anon key is used only for public product/settings reads. Writes, customer data, and transaction history use server routes with wallet authorization; never expose or commit `SUPABASE_SERVICE_ROLE_KEY`.
+Set all four variables in Vercel → **Project → Settings → Environment Variables** and redeploy. Make sure `SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_URL` identify the same project. Merchant catalog and settings reads use the server routes so they share the same Supabase connection as authorized writes. Keep the service-role key server-only; never expose or commit `SUPABASE_SERVICE_ROLE_KEY`.
 
 Shared payment records include customer name, email, and mobile number. Merchant history is returned only after a one-time wallet signature proves control of the merchant account. Customer details are not stored in browser storage and are saved only when a verified payment completes.
 

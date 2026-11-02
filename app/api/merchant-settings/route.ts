@@ -13,6 +13,46 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+export async function GET(request: Request) {
+  try {
+    const accountId = new URL(request.url).searchParams.get("accountId");
+    if (!accountId || !isValidNearAccountId(accountId)) {
+      return NextResponse.json(
+        { error: "A valid merchant account is required." },
+        { status: 400 },
+      );
+    }
+
+    const { data, error } = await getSupabaseAdmin()
+      .from("settings")
+      .select(
+        "merchant_id, store_name, preferred_token, fiat_currency, accepted_tokens",
+      )
+      .eq("merchant_id", accountId)
+      .maybeSingle();
+
+    if (error) {
+      throw getSupabaseOperationError(
+        "Unable to load merchant settings",
+        error,
+      );
+    }
+
+    return NextResponse.json({ settings: data });
+  } catch (error) {
+    console.error("Unable to load the shared merchant settings.", error);
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to load merchant settings.",
+      },
+      { status: 500 },
+    );
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const body: unknown = await request.json();
