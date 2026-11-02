@@ -3,20 +3,27 @@
 import Image from "next/image";
 import { useEffect, useState, type ChangeEvent } from "react";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
+import type { WalletSelector } from "@near-wallet-selector/core";
+import { setupModal, type WalletSelectorModal } from "@near-wallet-selector/modal-ui";
 import Sidebar from "../../../components/Sidebar";
 import {
   defaultMerchantSettings,
   isValidNearAccountId,
-  merchantSettingsStorageKey,
   parseMerchantSettings,
   type MerchantSettings,
 } from "../../../lib/merchant-settings";
 import {
   isValidProductImageUrl,
-  merchantProductsStorageKey,
+  merchantProductCategories,
+  isMerchantProduct,
   parseMerchantProducts,
   type MerchantProduct,
+  type MerchantProductCategory,
 } from "../../../lib/merchant-products";
+import { restaurantSampleProducts } from "../../../lib/restaurant-sample-products";
+import { getWalletSelector } from "../../../lib/near-wallet-selector";
+import { loadMerchantProducts, loadMerchantSettings } from "../../../lib/merchant-data";
+import { signMerchantAuthorization } from "../../../lib/merchant-authorization";
 
 const fieldClassName =
   "mt-2 w-full border border-neutral-300 bg-white px-4 py-3 text-sm outline-none transition placeholder:text-neutral-400 focus:border-black disabled:bg-neutral-50 disabled:text-neutral-500";
@@ -24,6 +31,15 @@ const fieldLabelClassName =
   "block text-xs font-bold uppercase tracking-[0.16em] text-neutral-700";
 
 type SettingsSection = "profile" | "payments" | "catalog";
+
+function readApiError(value: unknown, fallback: string): string {
+  return typeof value === "object" &&
+    value !== null &&
+    "error" in value &&
+    typeof value.error === "string"
+    ? value.error
+    : fallback;
+}
 
 export default function MerchantSettingsPage() {
   const [settings, setSettings] = useState<MerchantSettings>(
@@ -37,24 +53,68 @@ export default function MerchantSettingsPage() {
   const [productError, setProductError] = useState<string | null>(null);
   const [productMessage, setProductMessage] = useState("");
   const [productName, setProductName] = useState("");
+  const [productCategory, setProductCategory] =
+    useState<MerchantProductCategory>("Other");
   const [productPrice, setProductPrice] = useState("");
+  const [productCurrency, setProductCurrency] = useState<"INR" | "USD">("INR");
   const [productDescription, setProductDescription] = useState("");
   const [productImageUrl, setProductImageUrl] = useState("");
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [activeSection, setActiveSection] =
     useState<SettingsSection>("profile");
+  const [walletSelector, setWalletSelector] = useState<WalletSelector | null>(
+    null,
+  );
+  const [walletModal, setWalletModal] = useState<WalletSelectorModal | null>(
+    null,
+  );
+  const [connectedAccountId, setConnectedAccountId] = useState<string | null>(
+    null,
+  );
+  const [isSavingProduct, setIsSavingProduct] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+
+  async function loadSharedProducts(
+    merchantAccountId: string,
+    isActive: () => boolean = () => true,
+  ) {
+    if (isActive()) {
+      setProductsLoaded(false);
+      setProductError(null);
+    }
+
+    try {
+      const savedProducts = await loadMerchantProducts(merchantAccountId);
+      if (isActive()) {
+        setProducts(savedProducts);
+      }
+    } catch (error) {
+      console.error("Unable to load the shared merchant product catalog.", error);
+      if (isActive()) {
+        setProducts([]);
+        setProductError(
+          error instanceof Error
+            ? error.message
+            : "The shared product catalog could not be loaded from Supabase.",
+        );
+      }
+    } finally {
+      if (isActive()) setProductsLoaded(true);
+    }
+  }
 
   useEffect(() => {
     let active = true;
 
     async function loadSettingsAndProducts() {
       await Promise.resolve();
+      let merchantAccountId = defaultMerchantSettings.merchantAccountId;
       try {
-        const savedSettings = parseMerchantSettings(
-          localStorage.getItem(merchantSettingsStorageKey),
-        );
+        const savedSettings = await loadMerchantSettings(merchantAccountId);
+        merchantAccountId = savedSettings.merchantAccountId;
         if (active) {
           setSettings(savedSettings);
+          setProductCurrency(savedSettings.fiatCurrency);
         }
       } catch (error) {
         console.error("Unable to load merchant settings.", error);
@@ -62,38 +122,97 @@ export default function MerchantSettingsPage() {
           setSettingsError(
             error instanceof Error
               ? error.message
-              : "Merchant settings could not be loaded from this browser.",
+              : "Merchant settings could not be loaded from Supabase.",
           );
         }
       }
 
-      try {
-        const savedProducts = parseMerchantProducts(
-          localStorage.getItem(merchantProductsStorageKey),
-        );
-        if (active) {
-          setProducts(savedProducts);
-        }
-      } catch (error) {
-        console.error("Unable to load the merchant product catalog.", error);
-        if (active) {
-          setProductError(
-            error instanceof Error
-              ? error.message
-              : "The product catalog could not be loaded from this browser.",
-          );
-        }
-      } finally {
-        if (active) {
-          setIsLoading(false);
-          setProductsLoaded(true);
-        }
+      await loadSharedProducts(merchantAccountId, () => active);
+      if (active) {
+        setIsLoading(false);
       }
     }
 
     void loadSettingsAndProducts();
     return () => {
       active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!connectedAccountId || connectedAccountId === settings.merchantAccountId) {
+      return;
+    }
+
+    const connectedMerchantId = connectedAccountId;
+    let active = true;
+    async function loadConnectedMerchant() {
+      setIsLoading(true);
+      setSettingsError(null);
+      try {
+        const savedSettings = await loadMerchantSettings(connectedMerchantId);
+        if (active) {
+          setSettings(savedSettings);
+          setProductCurrency(savedSettings.fiatCurrency);
+        }
+        await loadSharedProducts(connectedMerchantId, () => active);
+      } catch (error) {
+        console.error("Unable to load settings for the connected merchant.", error);
+        if (active) {
+          setSettingsError(
+            error instanceof Error
+              ? error.message
+              : "Merchant settings could not be loaded from Supabase.",
+          );
+        }
+      } finally {
+        if (active) setIsLoading(false);
+      }
+    }
+    void loadConnectedMerchant();
+    return () => {
+      active = false;
+    };
+  }, [connectedAccountId, settings.merchantAccountId]);
+
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: (() => void) | undefined;
+
+    getWalletSelector()
+      .then((selector) => {
+        if (!active) {
+          return;
+        }
+        setWalletSelector(selector);
+        setWalletModal(
+          setupModal(selector, {
+            theme: "light",
+            description: "Authorize changes to the shared product catalog.",
+          }),
+        );
+        const syncAccount = () => {
+          const accounts = selector.store.getState().accounts;
+          setConnectedAccountId(
+            accounts.find((account) => account.active)?.accountId ??
+              accounts[0]?.accountId ??
+              null,
+          );
+        };
+        syncAccount();
+        const subscription = selector.store.observable.subscribe(syncAccount);
+        unsubscribe = () => subscription.unsubscribe();
+      })
+      .catch((error: unknown) => {
+        console.error("Unable to initialize the merchant wallet for catalog updates.", error);
+        if (active) {
+          setProductError("A NEAR wallet is required to manage the shared catalog.");
+        }
+      });
+
+    return () => {
+      active = false;
+      unsubscribe?.();
     };
   }, []);
 
@@ -123,7 +242,7 @@ export default function MerchantSettingsPage() {
     setSettingsMessage("");
   }
 
-  function saveSettings() {
+  async function saveSettings() {
     const merchantAccountId = settings.merchantAccountId.trim();
     const storeName = settings.storeName.trim();
     if (!storeName || storeName.length > 80) {
@@ -145,26 +264,68 @@ export default function MerchantSettingsPage() {
     }
 
     const nextSettings = { ...settings, merchantAccountId, storeName };
-    try {
-      localStorage.setItem(
-        merchantSettingsStorageKey,
-        JSON.stringify(nextSettings),
+    if (
+      !walletSelector ||
+      !connectedAccountId ||
+      connectedAccountId !== merchantAccountId
+    ) {
+      setSettingsError(
+        "Connect the configured merchant NEAR wallet to save settings.",
       );
-      setSettings(nextSettings);
-      setSettingsError(null);
-      setSettingsMessage("Settings saved in this browser.");
+      walletModal?.show();
+      return;
+    }
+
+    setIsSavingSettings(true);
+    setSettingsError(null);
+    setSettingsMessage("");
+    try {
+      const authorization = await signMerchantAuthorization(
+        walletSelector,
+        connectedAccountId,
+        "merchant-settings",
+      );
+      const response = await fetch("/api/merchant-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...authorization,
+          settings: nextSettings,
+        }),
+      });
+      const result: unknown = await response.json();
+      if (
+        !response.ok ||
+        typeof result !== "object" ||
+        result === null ||
+        !("settings" in result)
+      ) {
+        throw new Error(
+          readApiError(result, "Merchant settings could not be saved to Supabase."),
+        );
+      }
+      const savedSettings = parseMerchantSettings(result.settings);
+      setSettings(savedSettings);
+      setProductCurrency(savedSettings.fiatCurrency);
+      setSettingsMessage("Settings saved to Supabase.");
     } catch (error) {
       console.error("Unable to save merchant settings.", error);
       setSettingsError(
-        "Settings could not be saved. Check this browser's storage permissions.",
+        error instanceof Error
+          ? error.message
+          : "Merchant settings could not be saved to Supabase.",
       );
       setSettingsMessage("");
+    } finally {
+      setIsSavingSettings(false);
     }
   }
 
   function resetProductForm() {
     setProductName("");
+    setProductCategory("Other");
     setProductPrice("");
+    setProductCurrency(settings.fiatCurrency);
     setProductDescription("");
     setProductImageUrl("");
     setEditingProductId(null);
@@ -220,29 +381,81 @@ export default function MerchantSettingsPage() {
     }
   }
 
-  function persistProducts(nextProducts: MerchantProduct[]): boolean {
-    try {
-      localStorage.setItem(
-        merchantProductsStorageKey,
-        JSON.stringify(nextProducts),
+  async function mutateSharedCatalog(
+    mutation:
+      | { action: "upsert"; product: MerchantProduct }
+      | { action: "delete"; productId: string }
+      | { action: "import"; products: MerchantProduct[] },
+  ): Promise<boolean> {
+    if (!walletSelector || connectedAccountId !== settings.merchantAccountId) {
+      setProductError(
+        "Connect the configured merchant NEAR wallet to authorize this catalog change.",
       );
-      setProducts(nextProducts);
-      setProductError(null);
-      setProductMessage("Product catalog saved in this browser.");
+      walletModal?.show();
+      return false;
+    }
+
+    setIsSavingProduct(true);
+    setProductError(null);
+    setProductMessage("");
+    try {
+      const authorization = await signMerchantAuthorization(
+        walletSelector,
+        connectedAccountId,
+        "merchant-catalog",
+      );
+
+      const response = await fetch("/api/merchant-products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...mutation,
+          ...authorization,
+        }),
+      });
+      const result: unknown = await response.json();
+      if (
+        !response.ok ||
+        typeof result !== "object" ||
+        result === null ||
+        !("products" in result) ||
+        !Array.isArray(result.products) ||
+        !result.products.every(isMerchantProduct)
+      ) {
+        throw new Error(
+          readApiError(result, "The product catalog could not be updated in Supabase."),
+        );
+      }
+
+      setProducts(parseMerchantProducts(result.products));
+      if (mutation.action === "import") {
+        setProductMessage(
+          `Imported ${mutation.products.length} product(s) into the shared Supabase catalog.`,
+        );
+      } else {
+        setProductMessage(
+          mutation.action === "delete"
+            ? "Product deleted from the shared Supabase catalog."
+            : "Product saved to the shared Supabase catalog.",
+        );
+      }
       return true;
     } catch (error) {
-      console.error("Unable to save the merchant product catalog.", error);
+      console.error("Unable to update the shared merchant product catalog.", error);
       setProductError(
-        "Products could not be saved. Check this browser's storage space and permissions.",
+        error instanceof Error
+          ? error.message
+          : "The product catalog could not be updated in Supabase.",
       );
-      setProductMessage("");
       return false;
+    } finally {
+      setIsSavingProduct(false);
     }
   }
 
-  function saveProduct() {
+  async function saveProduct() {
     const name = productName.trim();
-    const priceInr = Number(productPrice);
+    const price = Number(productPrice);
     const description = productDescription.trim();
     const imageUrl = productImageUrl.trim();
 
@@ -250,7 +463,7 @@ export default function MerchantSettingsPage() {
       setProductError("Product name must be between 1 and 100 characters.");
       return;
     }
-    if (!Number.isFinite(priceInr) || priceInr <= 0) {
+    if (!Number.isFinite(price) || price <= 0) {
       setProductError("Enter a product price greater than zero.");
       return;
     }
@@ -268,24 +481,22 @@ export default function MerchantSettingsPage() {
     const product: MerchantProduct = {
       id: editingProductId ?? crypto.randomUUID(),
       name,
-      priceInr: Math.round(priceInr * 100) / 100,
+      category: productCategory,
+      price: Math.round(price * 100) / 100,
+      currency: productCurrency,
       description,
       imageUrl,
     };
-    const nextProducts = editingProductId
-      ? products.map((current) =>
-          current.id === editingProductId ? product : current,
-        )
-      : [...products, product];
-
-    if (persistProducts(nextProducts)) {
+    if (await mutateSharedCatalog({ action: "upsert", product })) {
       resetProductForm();
     }
   }
 
   function editProduct(product: MerchantProduct) {
     setProductName(product.name);
-    setProductPrice(product.priceInr.toFixed(2));
+    setProductCategory(product.category);
+    setProductPrice(product.price.toFixed(2));
+    setProductCurrency(product.currency);
     setProductDescription(product.description);
     setProductImageUrl(product.imageUrl);
     setEditingProductId(product.id);
@@ -294,8 +505,8 @@ export default function MerchantSettingsPage() {
     document.getElementById("product-name")?.focus();
   }
 
-  function deleteProduct(productId: string) {
-    if (!persistProducts(products.filter((product) => product.id !== productId))) {
+  async function deleteProduct(productId: string) {
+    if (!(await mutateSharedCatalog({ action: "delete", productId }))) {
       return;
     }
     if (editingProductId === productId) {
@@ -318,11 +529,11 @@ export default function MerchantSettingsPage() {
               </h1>
               <p className="mt-2 max-w-xl text-sm leading-6 text-neutral-600">
                 Manage your store profile, accepted payment tokens, and product
-                catalog. Changes are saved to this browser.
+                catalog. Your changes are stored in Supabase.
               </p>
             </div>
             <span className="text-xs font-semibold uppercase tracking-widest text-neutral-500">
-              {isLoading ? "Loading settings" : "Local settings"}
+              {isLoading ? "Loading settings" : "Supabase settings"}
             </span>
           </header>
 
@@ -360,7 +571,7 @@ export default function MerchantSettingsPage() {
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              saveSettings();
+              void saveSettings();
             }}
             className="space-y-5"
           >
@@ -390,7 +601,7 @@ export default function MerchantSettingsPage() {
                         updateSettings("storeName", event.target.value)
                       }
                       placeholder="ETHcryptohub"
-                      disabled={isLoading}
+                      disabled={isLoading || isSavingSettings}
                       className={fieldClassName}
                     />
                   </label>
@@ -409,7 +620,7 @@ export default function MerchantSettingsPage() {
                         updateSettings("merchantAccountId", event.target.value)
                       }
                       placeholder="ethcryptohub.testnet"
-                      disabled={isLoading}
+                      disabled={isLoading || isSavingSettings}
                       className={`${fieldClassName} font-mono normal-case tracking-normal`}
                     />
                     <span className="mt-2 block text-xs font-normal normal-case tracking-normal text-neutral-500">
@@ -430,7 +641,7 @@ export default function MerchantSettingsPage() {
                           event.target.value === "USD" ? "USD" : "INR",
                         )
                       }
-                      disabled={isLoading}
+                      disabled={isLoading || isSavingSettings}
                       className={fieldClassName}
                     >
                       <option value="INR">INR — Indian Rupee</option>
@@ -469,7 +680,7 @@ export default function MerchantSettingsPage() {
                           event.target.value === "USDC" ? "USDC" : "NEAR",
                         )
                       }
-                      disabled={isLoading}
+                      disabled={isLoading || isSavingSettings}
                       className={fieldClassName}
                     >
                       <option value="NEAR">NEAR</option>
@@ -507,7 +718,7 @@ export default function MerchantSettingsPage() {
                           <input
                             type="checkbox"
                             checked={enabled}
-                            disabled={isLoading || token === "NEAR"}
+                            disabled={isLoading || isSavingSettings || token === "NEAR"}
                             onChange={(event) =>
                               toggleAcceptedToken(token, event.target.checked)
                             }
@@ -546,10 +757,10 @@ export default function MerchantSettingsPage() {
             <div className="flex justify-end">
               <button
                 type="submit"
-                disabled={isLoading}
+                disabled={isLoading || isSavingSettings}
                 className="w-full bg-black px-7 py-4 text-sm font-bold uppercase tracking-[0.16em] text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
               >
-                Save Changes
+                {isSavingSettings ? "Saving..." : "Save Changes"}
               </button>
             </div>
             ) : null}
@@ -569,19 +780,65 @@ export default function MerchantSettingsPage() {
                 </p>
                 <h2 className="mt-2 text-xl font-black">Catalog manager</h2>
                 <p className="mt-2 max-w-xl text-sm leading-6 text-neutral-600">
-                  Add items to your POS with a name, INR price, optional
-                  description, and an image URL or uploaded image.
+                  Products are shared through Supabase for{" "}
+                  <span className="font-mono font-semibold text-black">
+                    {settings.merchantAccountId}
+                  </span>
+                  . Changes require authorization from that NEAR wallet.
                 </p>
               </div>
-              <span className="text-xs font-semibold uppercase tracking-widest text-neutral-500">
-                {products.length} {products.length === 1 ? "product" : "products"}
-              </span>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-xs font-semibold uppercase tracking-widest text-neutral-500">
+                  {products.length}{" "}
+                  {products.length === 1 ? "product" : "products"}
+                </span>
+                {connectedAccountId === settings.merchantAccountId ? (
+                  <span className="border border-emerald-700 px-3 py-2 text-xs font-bold text-emerald-800">
+                    WALLET AUTHORIZED
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => walletModal?.show()}
+                    disabled={!walletSelector || !walletModal}
+                    className="border border-black px-4 py-2 text-xs font-bold uppercase tracking-widest transition hover:bg-black hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Connect Merchant Wallet
+                  </button>
+                )}
+              </div>
             </div>
+
+            {products.length === 0 ? (
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-4 border border-neutral-300 p-4">
+                <p className="text-sm leading-6 text-neutral-600">
+                  Start with 12 sample Indian restaurant products, then edit
+                  them any time.
+                </p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void mutateSharedCatalog({
+                      action: "import",
+                      products: restaurantSampleProducts,
+                    })
+                  }
+                  disabled={
+                    !productsLoaded ||
+                    isSavingProduct ||
+                    connectedAccountId !== settings.merchantAccountId
+                  }
+                  className="bg-black px-4 py-3 text-xs font-bold uppercase tracking-widest text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isSavingProduct ? "Saving..." : "Add 12 Sample Products"}
+                </button>
+              </div>
+            ) : null}
 
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                saveProduct();
+                void saveProduct();
               }}
               className="mt-6 border border-neutral-300 p-4 sm:p-6"
             >
@@ -605,26 +862,71 @@ export default function MerchantSettingsPage() {
                     required
                     value={productName}
                     onChange={(event) => setProductName(event.target.value)}
-                    disabled={!productsLoaded}
+                    disabled={!productsLoaded || isSavingProduct}
                     placeholder="Product name"
                     className={fieldClassName}
                   />
                 </label>
-                <label className={fieldLabelClassName} htmlFor="product-price">
-                  Price (INR)
-                  <input
-                    id="product-price"
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    required
-                    value={productPrice}
-                    onChange={(event) => setProductPrice(event.target.value)}
-                    disabled={!productsLoaded}
-                    placeholder="0.00"
+                <label
+                  className={fieldLabelClassName}
+                  htmlFor="product-category"
+                >
+                  Category
+                  <select
+                    id="product-category"
+                    value={productCategory}
+                    onChange={(event) => {
+                      const category = event.target.value;
+                      setProductCategory(
+                        merchantProductCategories.find(
+                          (option) => option === category,
+                        ) ?? "Other",
+                      );
+                    }}
+                    disabled={!productsLoaded || isSavingProduct}
                     className={fieldClassName}
-                  />
+                  >
+                    {merchantProductCategories.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
                 </label>
+                <div>
+                  <label className={fieldLabelClassName} htmlFor="product-price">
+                    Price
+                  </label>
+                  <div className="mt-2 flex">
+                    <select
+                      id="product-currency"
+                      aria-label="Product price currency"
+                      value={productCurrency}
+                      onChange={(event) =>
+                        setProductCurrency(
+                          event.target.value === "USD" ? "USD" : "INR",
+                        )
+                      }
+                      disabled={!productsLoaded || isSavingProduct}
+                      className="border border-neutral-300 bg-neutral-50 px-3 text-sm font-bold outline-none focus:border-black"
+                    >
+                      <option value="INR">INR</option>
+                      <option value="USD">USD</option>
+                    </select>
+                    <input
+                      id="product-price"
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      required
+                      value={productPrice}
+                      onChange={(event) => setProductPrice(event.target.value)}
+                      disabled={!productsLoaded || isSavingProduct}
+                      placeholder="0.00"
+                      className={`${fieldClassName} mt-0`}
+                    />
+                  </div>
+                </div>
                 <label
                   className={`${fieldLabelClassName} sm:col-span-2`}
                   htmlFor="product-description"
@@ -638,7 +940,7 @@ export default function MerchantSettingsPage() {
                     onChange={(event) =>
                       setProductDescription(event.target.value)
                     }
-                    disabled={!productsLoaded}
+                    disabled={!productsLoaded || isSavingProduct}
                     placeholder="A short product description"
                     className={`${fieldClassName} resize-y`}
                   />
@@ -664,7 +966,7 @@ export default function MerchantSettingsPage() {
                       onChange={(event) =>
                         setProductImageUrl(event.target.value)
                       }
-                      disabled={!productsLoaded}
+                      disabled={!productsLoaded || isSavingProduct}
                       placeholder="https://example.com/product-image.jpg"
                       className={fieldClassName}
                     />
@@ -684,7 +986,7 @@ export default function MerchantSettingsPage() {
                       onChange={(event) =>
                         void handleProductImageUpload(event)
                       }
-                      disabled={!productsLoaded}
+                      disabled={!productsLoaded || isSavingProduct}
                       className={`${fieldClassName} file:mr-4 file:border-0 file:bg-black file:px-3 file:py-2 file:text-xs file:font-bold file:uppercase file:text-white`}
                     />
                   </label>
@@ -731,7 +1033,7 @@ export default function MerchantSettingsPage() {
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
                   type="submit"
-                  disabled={!productsLoaded}
+                  disabled={!productsLoaded || isSavingProduct}
                   className="inline-flex items-center justify-center gap-2 bg-black px-6 py-3 text-sm font-bold uppercase tracking-widest text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {editingProductId ? (
@@ -739,7 +1041,11 @@ export default function MerchantSettingsPage() {
                   ) : (
                     <Plus aria-hidden="true" size={18} />
                   )}
-                  {editingProductId ? "Update Product" : "Add Product"}
+                  {isSavingProduct
+                    ? "Saving..."
+                    : editingProductId
+                      ? "Update Product"
+                      : "Add Product"}
                 </button>
                 {editingProductId ? (
                   <button
@@ -765,7 +1071,7 @@ export default function MerchantSettingsPage() {
                       <div className="min-w-0">
                         <h3 className="break-words font-bold">{product.name}</h3>
                         <p className="mt-1 text-sm font-semibold">
-                          ₹{product.priceInr.toFixed(2)}
+                          {product.currency} {product.price.toFixed(2)}
                         </p>
                         {product.description ? (
                           <p className="mt-2 whitespace-pre-wrap text-sm leading-5 text-neutral-600">
@@ -794,9 +1100,10 @@ export default function MerchantSettingsPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => deleteProduct(product.id)}
+                          onClick={() => void deleteProduct(product.id)}
+                          disabled={isSavingProduct}
                           aria-label={`Delete ${product.name}`}
-                          className="border border-black p-2.5 transition hover:bg-black hover:text-white"
+                          className="border border-black p-2.5 transition hover:bg-black hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <Trash2 aria-hidden="true" size={16} />
                         </button>

@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   isPaymentRecord,
-  paymentHistoryStorageKey,
   type PaymentRecord,
 } from "../../../../lib/payment-history";
 
@@ -18,21 +17,31 @@ export default function ReceiptPage() {
   useEffect(() => {
     let active = true;
     async function loadReceipt() {
-      await Promise.resolve();
       try {
-        const rawHistory = localStorage.getItem(paymentHistoryStorageKey);
-        const parsed: unknown = rawHistory ? JSON.parse(rawHistory) : [];
-        if (!Array.isArray(parsed) || !parsed.every(isPaymentRecord)) {
-          throw new Error("Saved transaction history has an invalid format.");
-        }
-        const match = parsed.find((entry) => entry.transactionHash === id);
-        if (!match) {
-          throw new Error(
-            "This receipt is not available in this browser's saved history.",
-          );
+        const response = await fetch(
+          `/api/payment-records?txHash=${encodeURIComponent(id)}`,
+          { cache: "no-store" },
+        );
+        const result: unknown = await response.json();
+        if (
+          !response.ok ||
+          typeof result !== "object" ||
+          result === null ||
+          !("record" in result) ||
+          !isPaymentRecord(result.record) ||
+          result.record.transactionHash !== id
+        ) {
+          const apiMessage =
+            typeof result === "object" &&
+            result !== null &&
+            "error" in result &&
+            typeof result.error === "string"
+              ? result.error
+              : "The payment receipt could not be loaded from Supabase.";
+          throw new Error(apiMessage);
         }
         if (active) {
-          setRecord(match);
+          setRecord(result.record);
         }
       } catch (loadError) {
         console.error("Unable to load the payment receipt.", loadError);
@@ -40,7 +49,7 @@ export default function ReceiptPage() {
           setError(
             loadError instanceof Error
               ? loadError.message
-              : "The payment receipt could not be loaded.",
+              : "The payment receipt could not be loaded from Supabase.",
           );
         }
       }
@@ -104,11 +113,15 @@ export default function ReceiptPage() {
                       <span>
                         {item.name} × {item.quantity}
                         <span className="mt-1 block text-neutral-500">
-                          ₹{item.unitPriceInr.toFixed(2)} each
+                          {item.fiatCurrency ?? "INR"}{" "}
+                          {(item.unitPrice ?? item.unitPriceInr).toFixed(2)} each
                         </span>
                       </span>
                       <span className="whitespace-nowrap">
-                        ₹{(item.unitPriceInr * item.quantity).toFixed(2)}
+                        {item.fiatCurrency ?? "INR"}{" "}
+                        {(
+                          (item.unitPrice ?? item.unitPriceInr) * item.quantity
+                        ).toFixed(2)}
                       </span>
                     </li>
                   ))}

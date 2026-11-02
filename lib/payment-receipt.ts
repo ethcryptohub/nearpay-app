@@ -30,6 +30,8 @@ export function serializePaymentReceiptAuthorization(
       name: item.name,
       quantity: item.quantity,
       unitPriceInr: item.unitPriceInr,
+      unitPrice: item.unitPrice,
+      fiatCurrency: item.fiatCurrency,
     })),
     customer: {
       name: receipt.customer.name,

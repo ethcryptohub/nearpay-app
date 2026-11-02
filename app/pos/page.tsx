@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import QRCode from "react-qr-code";
 import { Check, Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
@@ -13,29 +13,28 @@ import Sidebar from "../../components/Sidebar";
 import {
   findMatchingNativeTransferInBlock,
   getLatestFinalizedBlockHeight,
+  type IncomingNativeTransfer,
 } from "../../lib/near";
 import {
   defaultMerchantSettings,
-  merchantSettingsStorageKey,
-  parseMerchantSettings,
   type MerchantSettings,
 } from "../../lib/merchant-settings";
 import {
-  merchantProductsStorageKey,
-  parseMerchantProducts,
   type MerchantProduct,
 } from "../../lib/merchant-products";
+import {
+  loadMerchantProducts,
+  loadMerchantSettings,
+} from "../../lib/merchant-data";
 import {
   calculateTokenAmount,
   fetchTokenRates,
   formatTokenAmount,
   type TokenRates,
 } from "../../lib/token-rates";
-import {
-  savePaymentRecord,
-  type ReceiptItem,
-} from "../../lib/payment-history";
+import type { ReceiptItem } from "../../lib/payment-history";
 import { getWalletSelector } from "../../lib/near-wallet-selector";
+import { signMerchantAuthorization } from "../../lib/merchant-authorization";
 
 type CartLine = {
   productId: string;
@@ -57,6 +56,15 @@ function nearAmountToYocto(amount: string): string | null {
 
 function getCurrentTimeMs(): number {
   return Date.now();
+}
+
+function readApiError(value: unknown, fallback: string): string {
+  return typeof value === "object" &&
+    value !== null &&
+    "error" in value &&
+    typeof value.error === "string"
+    ? value.error
+    : fallback;
 }
 
 function getPaymentBaseUrl(): string {
@@ -86,18 +94,26 @@ function isLoopbackPaymentUrl(paymentUrl: string): boolean {
   );
 }
 
-function fiatSubtotalToCurrency(
-  amountInr: number,
-  currency: "INR" | "USD",
+function convertFiatAmount(
+  amount: number,
+  fromCurrency: "INR" | "USD",
+  toCurrency: "INR" | "USD",
   rates: TokenRates | null,
-): number {
-  if (currency === "INR") {
-    return amountInr;
+): number | null {
+  if (fromCurrency === toCurrency) {
+    return amount;
   }
   if (!rates) {
-    return 0;
+    return null;
   }
-  return amountInr * (rates.prices.USDC.USD / rates.prices.USDC.INR);
+  return (
+    amount *
+    (rates.prices.USDC[toCurrency] / rates.prices.USDC[fromCurrency])
+  );
+}
+
+function formatFiatAmount(amount: number, currency: "INR" | "USD"): string {
+  return `${currency === "INR" ? "₹" : "$"}${amount.toFixed(2)}`;
 }
 
 type ActiveInvoice = {
@@ -161,47 +177,89 @@ export default function POSPage() {
     !merchantSettingsError &&
     connectedAccountId === merchantAccountId;
 
+  const persistObservedTransaction = useCallback(async (
+    invoice: ActiveInvoice,
+    transfer: IncomingNativeTransfer,
+  ) => {
+    if (
+      !walletSelector ||
+      connectedAccountId !== invoice.merchantAccountId
+    ) {
+      throw new Error("Connect the configured merchant wallet to save this sale.");
+    }
+
+    const authorization = await signMerchantAuthorization(
+      walletSelector,
+      invoice.merchantAccountId,
+      "merchant-transaction",
+    );
+    const response = await fetch("/api/merchant-transactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...authorization,
+        transactionHash: transfer.transactionHash,
+        customerAddress: transfer.senderAccountId,
+        amount: invoice.nearAmount,
+        fiatAmount: invoice.fiatAmount,
+        fiatCurrency: invoice.fiatCurrency,
+        usdcAmount: invoice.usdcAmount,
+        storeName: invoice.storeName,
+        items: invoice.items,
+      }),
+    });
+    const result: unknown = await response.json();
+    if (!response.ok) {
+      throw new Error(
+        readApiError(result, "The verified sale could not be saved to Supabase."),
+      );
+    }
+  }, [connectedAccountId, walletSelector]);
+
   useEffect(() => {
     let active = true;
 
     async function loadMerchantPreferences() {
       await Promise.resolve();
+      let accountId = defaultMerchantSettings.merchantAccountId;
       try {
-        const savedSettings = parseMerchantSettings(
-          localStorage.getItem(merchantSettingsStorageKey),
-        );
+        const savedSettings = await loadMerchantSettings(accountId);
+        accountId = savedSettings.merchantAccountId;
         if (active) {
           setMerchantSettings(savedSettings);
           setFiatCurrency(savedSettings.fiatCurrency);
+          setMerchantSettingsError(null);
         }
       } catch (error) {
         console.error("Unable to load merchant settings for the POS.", error);
         if (active) {
           setMerchantSettingsError(
-            "Merchant settings are invalid. Open Settings and save valid values before using the POS.",
+            error instanceof Error
+              ? error.message
+              : "Merchant settings could not be loaded from Supabase.",
           );
-          setWalletInitializing(false);
         }
-      } finally {
-        try {
-          const savedProducts = parseMerchantProducts(
-            localStorage.getItem(merchantProductsStorageKey),
-          );
-          if (active) {
-            setProducts(savedProducts);
-          }
-        } catch (error) {
-          console.error("Unable to load the merchant product catalog.", error);
-          if (active) {
-            setProductsError(
-              "The saved product catalog is invalid. Review Products Management in Settings.",
-            );
-          }
-        }
+      }
+
+      try {
+        const savedProducts = await loadMerchantProducts(accountId);
         if (active) {
-          setProductsLoaded(true);
-          setSettingsLoaded(true);
+          setProducts(savedProducts);
+          setProductsError(null);
         }
+      } catch (error) {
+        console.error("Unable to load the shared merchant product catalog.", error);
+        if (active) {
+          setProductsError(
+            error instanceof Error
+              ? error.message
+              : "The shared product catalog could not be loaded from Supabase.",
+          );
+        }
+      }
+      if (active) {
+        setProductsLoaded(true);
+        setSettingsLoaded(true);
       }
     }
 
@@ -210,6 +268,50 @@ export default function POSPage() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!connectedAccountId || connectedAccountId === merchantSettings.merchantAccountId) {
+      return;
+    }
+
+    let active = true;
+    setSettingsLoaded(false);
+    setProductsLoaded(false);
+    setMerchantSettingsError(null);
+    setProductsError(null);
+
+    Promise.all([
+      loadMerchantSettings(connectedAccountId),
+      loadMerchantProducts(connectedAccountId),
+    ])
+      .then(([savedSettings, savedProducts]) => {
+        if (!active) return;
+        setMerchantSettings(savedSettings);
+        setFiatCurrency(savedSettings.fiatCurrency);
+        setProducts(savedProducts);
+      })
+      .catch((error: unknown) => {
+        console.error("Unable to load data for the connected merchant.", error);
+        if (active) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Merchant data could not be loaded from Supabase.";
+          setMerchantSettingsError(message);
+          setProductsError(message);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setSettingsLoaded(true);
+          setProductsLoaded(true);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [connectedAccountId, merchantSettings.merchantAccountId]);
 
   const cartRows = cart
     .map((line) => ({
@@ -223,22 +325,38 @@ export default function POSPage() {
         product: MerchantProduct;
       } => Boolean(line.product),
     );
-  const cartSubtotalInr = cartRows.reduce(
-    (total, line) => total + line.product.priceInr * line.quantity,
+  const cartUnitPrices = cartRows.map((line) =>
+    convertFiatAmount(
+      line.product.price,
+      line.product.currency,
+      fiatCurrency,
+      tokenRates,
+    ),
+  );
+  const hasCartConversionError = cartUnitPrices.some(
+    (price) => price === null,
+  );
+  const cartSubtotalInSelectedCurrency = cartRows.reduce(
+    (total, line, index) =>
+      total + (cartUnitPrices[index] ?? 0) * line.quantity,
     0,
   );
   const quickAmount = Number(fiatAmount);
   const validQuickAmount =
     Number.isFinite(quickAmount) && quickAmount > 0 ? quickAmount : 0;
-  const cartSubtotalInSelectedCurrency =
-    fiatSubtotalToCurrency(cartSubtotalInr, fiatCurrency, tokenRates);
   const unroundedFiatTotal =
     cartSubtotalInSelectedCurrency + validQuickAmount;
   const fiatTotal =
-    Number.isFinite(unroundedFiatTotal) && unroundedFiatTotal > 0
+    !hasCartConversionError &&
+    Number.isFinite(unroundedFiatTotal) &&
+    unroundedFiatTotal > 0
       ? Math.round((unroundedFiatTotal + Number.EPSILON) * 100) / 100
       : 0;
-  const fiatTotalFormatted = fiatTotal > 0 ? fiatTotal.toFixed(2) : "0.00";
+  const fiatTotalFormatted = hasCartConversionError
+    ? "—"
+    : fiatTotal > 0
+      ? fiatTotal.toFixed(2)
+      : "0.00";
   const usdcAmount =
     tokenRates && fiatTotal > 0
       ? formatTokenAmount(
@@ -382,31 +500,18 @@ export default function POSPage() {
             !completedTransactionHashes.current.has(transfer.transactionHash)
           ) {
             completedTransactionHashes.current.add(transfer.transactionHash);
-            const transaction = {
-              date: new Date(transfer.blockTimestampMs).toISOString(),
-              fiatAmount: invoice.fiatAmount,
-              fiatCurrency: invoice.fiatCurrency,
-              usdcAmount: invoice.usdcAmount,
-              token: "NEAR" as const,
-              tokenAmount: invoice.nearAmount,
-              items: invoice.items,
-              storeName: invoice.storeName,
-              merchantAccountId: invoice.merchantAccountId,
-              senderAccountId: transfer.senderAccountId,
-              transactionHash: transfer.transactionHash,
-              status: "Success" as const,
-            };
-
             try {
-              savePaymentRecord(transaction);
+              await persistObservedTransaction(invoice, transfer);
               setHistorySaveError(null);
             } catch (error) {
               console.error(
-                "Unable to save the verified payment to browser history.",
+                "Unable to save the verified payment to Supabase.",
                 error,
               );
               setHistorySaveError(
-                "Payment succeeded on NEAR, but this browser could not save the transaction history.",
+                error instanceof Error
+                  ? `Payment succeeded on NEAR, but Supabase history was not updated: ${error.message}`
+                  : "Payment succeeded on NEAR, but Supabase history could not be updated.",
               );
             }
 
@@ -437,7 +542,15 @@ export default function POSPage() {
       active = false;
       clearInterval(intervalId);
     };
-  }, [activeInvoice, hasMerchantAccess, isModalOpen, paymentStatus]);
+  }, [
+    activeInvoice,
+    connectedAccountId,
+    hasMerchantAccess,
+    isModalOpen,
+    paymentStatus,
+    persistObservedTransaction,
+    walletSelector,
+  ]);
 
   function handleStartNewSale() {
     setTransactionHash("");
@@ -537,7 +650,21 @@ export default function POSPage() {
       const items: ReceiptItem[] = cartRows.map(({ product, quantity }) => ({
         name: product.name,
         quantity,
-        unitPriceInr: product.priceInr,
+        unitPriceInr:
+          convertFiatAmount(
+            product.price,
+            product.currency,
+            "INR",
+            tokenRates,
+          ) ?? 0,
+        unitPrice:
+          convertFiatAmount(
+            product.price,
+            product.currency,
+            fiatCurrency,
+            tokenRates,
+          ) ?? 0,
+        fiatCurrency,
       }));
       const qrPayload = `${getPaymentBaseUrl()}/customer?${new URLSearchParams({
         amount: nearAmount,
@@ -760,7 +887,7 @@ export default function POSPage() {
                           </span>
                           <span className="mt-auto flex w-full items-center justify-between pt-3">
                             <span className="font-black">
-                              ₹{product.priceInr.toFixed(2)}
+                              {formatFiatAmount(product.price, product.currency)}
                             </span>
                             <span className="flex h-7 w-7 items-center justify-center bg-black text-white transition group-hover:bg-neutral-700">
                               <Plus aria-hidden="true" size={16} />
@@ -802,7 +929,9 @@ export default function POSPage() {
                   </div>
                   {cartRows.length > 0 ? (
                     <ul className="divide-y divide-neutral-200">
-                      {cartRows.map(({ product, quantity }) => (
+                      {cartRows.map(({ product, quantity }, index) => {
+                        const selectedUnitPrice = cartUnitPrices[index];
+                        return (
                         <li
                           key={product.id}
                           className="flex items-center justify-between gap-3 py-4"
@@ -810,7 +939,9 @@ export default function POSPage() {
                           <div className="min-w-0 flex-1">
                             <p className="break-words text-sm font-bold">{product.name}</p>
                             <p className="mt-1 text-xs text-neutral-500">
-                              ₹{product.priceInr.toFixed(2)} each
+                              {selectedUnitPrice === null
+                                ? `${formatFiatAmount(product.price, product.currency)} each`
+                                : `${formatFiatAmount(selectedUnitPrice, fiatCurrency)} each`}
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
@@ -847,10 +978,16 @@ export default function POSPage() {
                             </button>
                           </div>
                           <span className="w-24 text-right text-sm font-bold">
-                            ₹{(product.priceInr * quantity).toFixed(2)}
+                            {selectedUnitPrice === null
+                              ? "—"
+                              : formatFiatAmount(
+                                  selectedUnitPrice * quantity,
+                                  fiatCurrency,
+                                )}
                           </span>
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   ) : (
                     <p className="py-8 text-center text-sm text-neutral-500">
@@ -860,7 +997,14 @@ export default function POSPage() {
                   {cartRows.length > 0 ? (
                     <div className="flex justify-between border-t border-neutral-200 pt-4 text-sm">
                       <span className="text-neutral-500">Items subtotal</span>
-                      <span className="font-bold">₹{cartSubtotalInr.toFixed(2)}</span>
+                      <span className="font-bold">
+                        {hasCartConversionError
+                          ? "Rate unavailable"
+                          : formatFiatAmount(
+                              cartSubtotalInSelectedCurrency,
+                              fiatCurrency,
+                            )}
+                      </span>
                     </div>
                   ) : null}
                 </section>
@@ -985,6 +1129,7 @@ export default function POSPage() {
                   disabled={
                     !tokenRates ||
                     Boolean(ratesError) ||
+                    hasCartConversionError ||
                     !expectedPaymentAmountYocto ||
                     isPreparingInvoice
                   }

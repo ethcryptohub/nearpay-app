@@ -1,47 +1,78 @@
+export const merchantProductCategories = [
+  "Beverages",
+  "Snacks",
+  "Lunch",
+  "Dinner",
+  "Desserts",
+  "Other",
+] as const;
+
+export type MerchantProductCategory =
+  (typeof merchantProductCategories)[number];
+
 export type MerchantProduct = {
   id: string;
   name: string;
-  priceInr: number;
+  category: MerchantProductCategory;
+  price: number;
+  currency: "INR" | "USD";
   description: string;
   imageUrl: string;
 };
 
-export const merchantProductsStorageKey = "nearpay_products";
-
 export function parseMerchantProducts(
-  serializedProducts: string | null,
+  value: unknown,
 ): MerchantProduct[] {
-  if (serializedProducts === null) {
-    return [];
+  if (!Array.isArray(value)) {
+    throw new Error("The Supabase product catalog has an invalid format.");
   }
 
-  const parsed: unknown = JSON.parse(serializedProducts);
-  if (!Array.isArray(parsed) || !parsed.every(isMerchantProduct)) {
-    throw new Error("Saved products have an invalid format.");
+  if (!value.every(isMerchantProduct)) {
+    throw new Error("The Supabase product catalog has invalid values.");
   }
-
-  return parsed;
+  return value;
 }
 
-function isMerchantProduct(value: unknown): value is MerchantProduct {
+export function isMerchantProduct(value: unknown): value is MerchantProduct {
   if (typeof value !== "object" || value === null) {
     return false;
   }
 
   const product = value as Partial<MerchantProduct>;
   return (
+    isValidProductDetails(product) &&
+    typeof product.price === "number" &&
+    Number.isFinite(product.price) &&
+    product.price > 0 &&
+    isMerchantProductCategory(product.category) &&
+    (product.currency === "INR" || product.currency === "USD")
+  );
+}
+
+function isValidProductDetails(
+  product: Partial<MerchantProduct>,
+): boolean {
+  return (
     typeof product.id === "string" &&
     product.id.length > 0 &&
     typeof product.name === "string" &&
     product.name.trim().length > 0 &&
     product.name.trim().length <= 100 &&
-    typeof product.priceInr === "number" &&
-    Number.isFinite(product.priceInr) &&
-    product.priceInr > 0 &&
+    (product.category === undefined ||
+      isMerchantProductCategory(product.category)) &&
     typeof product.description === "string" &&
     product.description.length <= 500 &&
     typeof product.imageUrl === "string" &&
     isValidProductImageUrl(product.imageUrl)
+  );
+}
+
+function isMerchantProductCategory(
+  value: unknown,
+): value is MerchantProductCategory {
+  return (
+    typeof value === "string" &&
+    merchantProductCategories.some((category) => category === value)
   );
 }
 

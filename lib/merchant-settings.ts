@@ -6,8 +6,6 @@ export type MerchantSettings = {
   acceptedTokens: Array<"USDC" | "NEAR">;
 };
 
-export const merchantSettingsStorageKey = "nearpay_settings";
-
 export const defaultMerchantSettings: MerchantSettings = {
   merchantAccountId: "ethcryptohub.testnet",
   storeName: "ETHcryptohub",
@@ -28,31 +26,34 @@ export function isValidNearAccountId(accountId: string): boolean {
 }
 
 export function parseMerchantSettings(
-  serializedSettings: string | null,
+  value: unknown,
+  fallbackMerchantAccountId = defaultMerchantSettings.merchantAccountId,
 ): MerchantSettings {
-  if (serializedSettings === null) {
-    return defaultMerchantSettings;
+  if (value === null) {
+    return {
+      ...defaultMerchantSettings,
+      merchantAccountId: fallbackMerchantAccountId,
+    };
   }
 
-  const parsed: unknown = JSON.parse(serializedSettings);
-  if (typeof parsed !== "object" || parsed === null) {
-    throw new Error("Saved merchant settings have an invalid format.");
+  if (typeof value !== "object" || value === null) {
+    throw new Error("Merchant settings have an invalid format.");
   }
 
-  const settings = parsed as Partial<MerchantSettings>;
-  const acceptedTokens =
-    settings.acceptedTokens === undefined
-      ? (["NEAR", "USDC"] as Array<"USDC" | "NEAR">)
-      : settings.acceptedTokens;
+  const row = value as Record<string, unknown>;
+  const merchantAccountId = row.merchant_id;
+  const storeName = row.store_name;
+  const preferredToken = row.preferred_token;
+  const fiatCurrency = row.fiat_currency;
+  const acceptedTokens = row.accepted_tokens;
   if (
-    typeof settings.merchantAccountId !== "string" ||
-    !isValidNearAccountId(settings.merchantAccountId) ||
-    typeof settings.storeName !== "string" ||
-    settings.storeName.trim().length === 0 ||
-    settings.storeName.trim().length > 80 ||
-    (settings.preferredToken !== "USDC" &&
-      settings.preferredToken !== "NEAR") ||
-    (settings.fiatCurrency !== "INR" && settings.fiatCurrency !== "USD") ||
+    typeof merchantAccountId !== "string" ||
+    !isValidNearAccountId(merchantAccountId) ||
+    typeof storeName !== "string" ||
+    storeName.trim().length === 0 ||
+    storeName.trim().length > 80 ||
+    (preferredToken !== "USDC" && preferredToken !== "NEAR") ||
+    (fiatCurrency !== "INR" && fiatCurrency !== "USD") ||
     !Array.isArray(acceptedTokens) ||
     acceptedTokens.length === 0 ||
     acceptedTokens.some((token) => token !== "NEAR" && token !== "USDC") ||
@@ -62,10 +63,10 @@ export function parseMerchantSettings(
   }
 
   return {
-    merchantAccountId: settings.merchantAccountId,
-    storeName: settings.storeName,
-    preferredToken: settings.preferredToken,
-    fiatCurrency: settings.fiatCurrency,
-    acceptedTokens,
+    merchantAccountId,
+    storeName,
+    preferredToken,
+    fiatCurrency,
+    acceptedTokens: acceptedTokens as Array<"USDC" | "NEAR">,
   };
 }

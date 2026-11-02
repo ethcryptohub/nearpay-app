@@ -4,7 +4,10 @@ import { isPaymentRecord, type PaymentRecord } from "../../../lib/payment-histor
 import {
   consumeAndVerifyWalletChallenge,
 } from "../../../lib/server-wallet-auth";
-import { getSupabaseAdmin } from "../../../lib/supabase-admin";
+import {
+  getSupabaseAdmin,
+  getSupabaseOperationError,
+} from "../../../lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
 
@@ -13,22 +16,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function toPaymentRecord(row: Record<string, unknown>): PaymentRecord | null {
-  const record: PaymentRecord = {
-    date: String(row.date),
+  const record: unknown = {
+    date: String(row.created_at),
     fiatAmount: String(row.fiat_amount),
-    fiatCurrency: row.fiat_currency === "USD" ? "USD" : "INR",
+    fiatCurrency: row.fiat_currency,
     usdcAmount: String(row.usdc_amount),
-    token: row.token === "USDC" ? "USDC" : "NEAR",
-    tokenAmount: String(row.token_amount),
-    items: Array.isArray(row.items) ? row.items as PaymentRecord["items"] : [],
+    token: row.token_type,
+    tokenAmount: String(row.amount),
+    items: row.items,
     storeName: String(row.store_name ?? ""),
-    merchantAccountId: String(row.merchant_account_id ?? ""),
-    senderAccountId: String(row.sender_account_id ?? ""),
-    customerName: String(row.customer_name ?? ""),
-    customerEmail: String(row.customer_email ?? ""),
-    customerMobile: String(row.customer_mobile ?? ""),
-    transactionHash: String(row.transaction_hash ?? ""),
-    status: row.status === "Success" ? "Success" : "Pending",
+    merchantAccountId: String(row.merchant_id ?? ""),
+    senderAccountId: String(row.customer_address ?? ""),
+    customerName: row.customer_name,
+    customerEmail: row.customer_email,
+    customerMobile: row.customer_mobile,
+    transactionHash: String(row.tx_hash ?? ""),
+    status: row.status,
   };
   return isPaymentRecord(record) ? record : null;
 }
@@ -64,13 +67,16 @@ export async function POST(request: Request) {
 
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
-      .from("payment_records")
+      .from("transactions")
       .select("*")
-      .eq("merchant_account_id", body.accountId)
-      .order("date", { ascending: false })
+      .eq("merchant_id", body.accountId)
+      .order("created_at", { ascending: false })
       .limit(500);
     if (error) {
-      throw new Error(`Unable to load merchant history: ${error.message}`);
+      throw getSupabaseOperationError(
+        "Unable to load merchant history",
+        error,
+      );
     }
 
     const records = (data ?? [])

@@ -10,36 +10,6 @@ export const emptyCustomerProfile: CustomerProfile = {
   mobile: "",
 };
 
-export function customerProfileStorageKey(accountId: string): string {
-  return `nearpay_customer_profile:${accountId}`;
-}
-
-export function parseCustomerProfile(value: string | null): CustomerProfile {
-  if (!value) {
-    return emptyCustomerProfile;
-  }
-
-  const parsed: unknown = JSON.parse(value);
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    !("name" in parsed) ||
-    typeof parsed.name !== "string" ||
-    !("email" in parsed) ||
-    typeof parsed.email !== "string" ||
-    !("mobile" in parsed) ||
-    typeof parsed.mobile !== "string"
-  ) {
-    throw new Error("Saved customer profile has an invalid format.");
-  }
-
-  return {
-    name: parsed.name,
-    email: parsed.email,
-    mobile: parsed.mobile,
-  };
-}
-
 export function validateCustomerProfile(
   profile: CustomerProfile,
 ): string | null {

@@ -22,10 +22,14 @@ export async function POST(request: Request) {
     const receiptDigest = payload.receiptDigest;
     if (
       typeof accountId !== "string" ||
-      (purpose !== "merchant-history" && purpose !== "payment-record") ||
+      (purpose !== "merchant-history" &&
+        purpose !== "merchant-catalog" &&
+        purpose !== "merchant-settings" &&
+        purpose !== "merchant-transaction" &&
+        purpose !== "payment-record") ||
       (purpose === "payment-record" && !isTransactionHash(transactionHash)) ||
       (purpose === "payment-record" && !isReceiptDigest(receiptDigest)) ||
-      (purpose === "merchant-history" &&
+      (purpose !== "payment-record" &&
         (transactionHash !== undefined || receiptDigest !== undefined))
     ) {
       return NextResponse.json({ error: "Invalid wallet challenge request." }, { status: 400 });

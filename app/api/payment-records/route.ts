@@ -1,13 +1,20 @@
 import { NextResponse } from "next/server";
 import { JsonRpcProvider } from "near-api-js";
 import type { SignedMessage } from "@near-wallet-selector/core";
-import { isReceiptItem, type PaymentRecord } from "../../../lib/payment-history";
+import {
+  isPaymentRecord,
+  isReceiptItem,
+  type PaymentRecord,
+} from "../../../lib/payment-history";
 import {
   consumeAndVerifyWalletChallenge,
   isReceiptDigest,
   isTransactionHash,
 } from "../../../lib/server-wallet-auth";
-import { getSupabaseAdmin } from "../../../lib/supabase-admin";
+import {
+  getSupabaseAdmin,
+  getSupabaseOperationError,
+} from "../../../lib/supabase-admin";
 import { isValidNearAccountId } from "../../../lib/merchant-settings";
 import {
   validateCustomerProfile,
@@ -60,6 +67,66 @@ function nearToYocto(amount: string): string | null {
     BigInt(whole) * BigInt(10) ** BigInt(24) +
     BigInt(fraction.padEnd(24, "0"))
   ).toString();
+}
+
+export async function GET(request: Request) {
+  try {
+    const transactionHash = new URL(request.url).searchParams.get("txHash");
+    if (!isTransactionHash(transactionHash)) {
+      return NextResponse.json(
+        { error: "A valid transaction hash is required." },
+        { status: 400 },
+      );
+    }
+
+    const { data, error } = await getSupabaseAdmin()
+      .from("transactions")
+      .select(
+        "merchant_id, customer_address, amount, token_type, tx_hash, status, created_at, fiat_amount, fiat_currency, usdc_amount, items, store_name",
+      )
+      .eq("tx_hash", transactionHash)
+      .maybeSingle();
+    if (error) {
+      throw getSupabaseOperationError("Unable to load payment receipt", error);
+    }
+    if (!data) {
+      return NextResponse.json(
+        { error: "This receipt was not found in Supabase." },
+        { status: 404 },
+      );
+    }
+
+    const record = {
+      date: String(data.created_at),
+      fiatAmount: String(data.fiat_amount),
+      fiatCurrency: data.fiat_currency,
+      usdcAmount: String(data.usdc_amount),
+      token: data.token_type,
+      tokenAmount: String(data.amount),
+      items: data.items,
+      storeName: String(data.store_name),
+      merchantAccountId: String(data.merchant_id),
+      senderAccountId: String(data.customer_address),
+      transactionHash: String(data.tx_hash),
+      status: data.status,
+    };
+    if (!isPaymentRecord(record)) {
+      throw new Error("The stored receipt has invalid data.");
+    }
+
+    return NextResponse.json({ record });
+  } catch (error) {
+    console.error("Unable to load a payment receipt from Supabase.", error);
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to load the payment receipt.",
+      },
+      { status: 500 },
+    );
+  }
 }
 
 export async function POST(request: Request) {
@@ -189,17 +256,17 @@ export async function POST(request: Request) {
     }
 
     const record = {
-      transaction_hash: transactionHash,
-      date: new Date().toISOString(),
+      tx_hash: transactionHash,
+      created_at: new Date().toISOString(),
       fiat_amount: fiatAmount,
       fiat_currency: normalizedFiatCurrency,
       usdc_amount: usdcAmount,
-      token: "NEAR",
-      token_amount: paymentAmount,
+      token_type: "NEAR",
+      amount: paymentAmount,
       items,
       store_name: storeName,
-      merchant_account_id: merchantAccountId,
-      sender_account_id: accountId,
+      merchant_id: merchantAccountId,
+      customer_address: accountId,
       customer_name: customer.name,
       customer_email: customer.email,
       customer_mobile: customer.mobile,
@@ -208,14 +275,17 @@ export async function POST(request: Request) {
 
     const supabase = getSupabaseAdmin();
     const { error } = await supabase
-      .from("payment_records")
-      .upsert(record, { onConflict: "transaction_hash" });
+      .from("transactions")
+      .upsert(record, { onConflict: "tx_hash" });
     if (error) {
-      throw new Error(`Unable to save verified payment: ${error.message}`);
+      throw getSupabaseOperationError(
+        "Unable to save verified payment",
+        error,
+      );
     }
 
     const responseRecord: PaymentRecord = {
-      date: record.date,
+      date: record.created_at,
       fiatAmount: record.fiat_amount,
       fiatCurrency: normalizedFiatCurrency,
       usdcAmount: record.usdc_amount,
@@ -223,12 +293,12 @@ export async function POST(request: Request) {
       tokenAmount: paymentAmount,
       items: record.items,
       storeName: record.store_name,
-      merchantAccountId: record.merchant_account_id,
-      senderAccountId: record.sender_account_id,
+      merchantAccountId: record.merchant_id,
+      senderAccountId: record.customer_address,
       customerName: record.customer_name,
       customerEmail: record.customer_email,
       customerMobile: record.customer_mobile,
-      transactionHash: record.transaction_hash,
+      transactionHash: record.tx_hash,
       status: "Success",
     };
     return NextResponse.json({ record: responseRecord });

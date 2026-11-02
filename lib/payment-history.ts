@@ -2,6 +2,8 @@ export type ReceiptItem = {
   name: string;
   quantity: number;
   unitPriceInr: number;
+  unitPrice?: number;
+  fiatCurrency?: "INR" | "USD";
 };
 
 export type PaymentRecord = {
@@ -21,8 +23,6 @@ export type PaymentRecord = {
   transactionHash?: string;
   status: "Pending" | "Success" | "Failed";
 };
-
-export const paymentHistoryStorageKey = "nearpay_history";
 
 export function isPaymentRecord(value: unknown): value is PaymentRecord {
   if (typeof value !== "object" || value === null) {
@@ -79,33 +79,13 @@ export function isReceiptItem(value: unknown): value is ReceiptItem {
     item.quantity > 0 &&
     typeof item.unitPriceInr === "number" &&
     Number.isFinite(item.unitPriceInr) &&
-    item.unitPriceInr >= 0
-  );
-}
-
-export function readPaymentHistory(): PaymentRecord[] {
-  const serialized = localStorage.getItem(paymentHistoryStorageKey);
-  const parsed: unknown = serialized ? JSON.parse(serialized) : [];
-  if (!Array.isArray(parsed) || !parsed.every(isPaymentRecord)) {
-    throw new Error("Saved payment history has an invalid format.");
-  }
-  return parsed;
-}
-
-export function savePaymentRecord(record: PaymentRecord): void {
-  const history = readPaymentHistory();
-  const existingIndex = record.transactionHash
-    ? history.findIndex(
-        (entry) => entry.transactionHash === record.transactionHash,
-      )
-    : -1;
-  if (existingIndex >= 0) {
-    history[existingIndex] = { ...history[existingIndex], ...record };
-  } else {
-    history.unshift(record);
-  }
-  localStorage.setItem(
-    paymentHistoryStorageKey,
-    JSON.stringify(history),
+    item.unitPriceInr >= 0 &&
+    (item.unitPrice === undefined ||
+      (typeof item.unitPrice === "number" &&
+        Number.isFinite(item.unitPrice) &&
+        item.unitPrice >= 0)) &&
+    (item.fiatCurrency === undefined ||
+      item.fiatCurrency === "INR" ||
+      item.fiatCurrency === "USD")
   );
 }

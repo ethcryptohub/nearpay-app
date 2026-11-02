@@ -20,15 +20,12 @@ import type { IScannerControls } from "@zxing/browser";
 import { isValidNearAccountId } from "../../lib/merchant-settings";
 import {
   isReceiptItem,
-  savePaymentRecord,
   type ReceiptItem,
 } from "../../lib/payment-history";
 import type { PaymentToken } from "../../lib/token-rates";
 import { getWalletSelector } from "../../lib/near-wallet-selector";
 import {
-  customerProfileStorageKey,
   emptyCustomerProfile,
-  parseCustomerProfile,
   validateCustomerProfile,
   type CustomerProfile,
 } from "../../lib/customer-profile";
@@ -277,9 +274,7 @@ function PaymentPortal() {
   const [customerDetails, setCustomerDetails] =
     useState<CustomerProfile>(emptyCustomerProfile);
   const [profileAccountId, setProfileAccountId] = useState<string | null>(null);
-  const [profileMessage, setProfileMessage] = useState("");
   const [profileError, setProfileError] = useState<string | null>(null);
-  const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [paymentState, setPaymentState] = useState<PaymentState>("pending");
   const [transactionHash, setTransactionHash] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -310,48 +305,7 @@ function PaymentPortal() {
     const updatedDetails = { ...customerDetailsRef.current, [field]: value };
     customerDetailsRef.current = updatedDetails;
     setCustomerDetails(updatedDetails);
-    setProfileMessage("");
     setProfileError(null);
-  }
-
-  function saveCustomerProfile(): boolean {
-    if (!accountId) {
-      setProfileError("Connect your NEAR wallet before saving a profile.");
-      return false;
-    }
-    const validationError = validateCustomerProfile(customerDetails);
-    if (validationError) {
-      setProfileError(validationError);
-      setProfileMessage("");
-      return false;
-    }
-
-    setIsSavingProfile(true);
-    try {
-      const normalizedProfile = {
-        name: customerDetails.name.trim(),
-        email: customerDetails.email.trim(),
-        mobile: customerDetails.mobile.trim(),
-      };
-      localStorage.setItem(
-        customerProfileStorageKey(accountId),
-        JSON.stringify(normalizedProfile),
-      );
-      customerDetailsRef.current = normalizedProfile;
-      setCustomerDetails(normalizedProfile);
-      setProfileError(null);
-      setProfileMessage("Profile saved on this device for this wallet.");
-      return true;
-    } catch (error) {
-      console.error("Unable to save the customer wallet profile.", error);
-      setProfileError(
-        "Profile could not be saved in this browser. Check storage permissions.",
-      );
-      setProfileMessage("");
-      return false;
-    } finally {
-      setIsSavingProfile(false);
-    }
   }
 
   function resetForInvoiceScan() {
@@ -557,33 +511,6 @@ function PaymentPortal() {
         }
 
         try {
-          const record = {
-            date: new Date().toISOString(),
-            fiatAmount,
-            fiatCurrency,
-            usdcAmount: invoice.usdcAmount || amount,
-            token: "NEAR" as const,
-            tokenAmount: amount,
-            items: invoice.items,
-            storeName: invoice.storeName,
-            merchantAccountId: merchant,
-            senderAccountId: outcome.transaction.signer_id,
-            customerName: customerDetails.name.trim(),
-            customerEmail: customerDetails.email.trim(),
-            customerMobile: customerDetails.mobile.trim(),
-            transactionHash: hash,
-            status: "Success" as const,
-          };
-          savePaymentRecord(record);
-          setHistorySaveError(null);
-        } catch (error) {
-          console.error("Unable to save the payment to browser history.", error);
-          setHistorySaveError(
-            "Payment succeeded, but this browser could not save the transaction history.",
-          );
-        }
-
-        try {
           const wallet = walletRef.current;
           if (!wallet?.signMessage) {
             throw new Error(
@@ -755,47 +682,23 @@ function PaymentPortal() {
           const previousAccountId = activeAccountIdRef.current;
           activeAccountIdRef.current = nextAccountId;
           setAccountId(nextAccountId);
-          setProfileMessage("");
           if (previousAccountId !== nextAccountId) {
             setProfileError(null);
-            setProfileAccountId(null);
             if (!nextAccountId) {
-              customerDetailsRef.current = emptyCustomerProfile;
-              setCustomerDetails(emptyCustomerProfile);
+                customerDetailsRef.current = emptyCustomerProfile;
+                setCustomerDetails(emptyCustomerProfile);
+                setProfileAccountId(null);
             } else {
-              try {
-                const savedProfile = parseCustomerProfile(
-                  localStorage.getItem(
-                    customerProfileStorageKey(nextAccountId),
-                  ),
-                );
-                const hasSavedProfile = Object.values(savedProfile).some(
-                  (value) => value.trim().length > 0,
-                );
                 const hasPreConnectionDraft = Object.values(
                   customerDetailsRef.current,
                 ).some((value) => value.trim().length > 0);
                 const profileToUse =
-                  previousAccountId === null &&
-                  hasPreConnectionDraft &&
-                  !hasSavedProfile
+                  previousAccountId === null && hasPreConnectionDraft
                     ? customerDetailsRef.current
-                    : savedProfile;
+                    : emptyCustomerProfile;
                 customerDetailsRef.current = profileToUse;
                 setCustomerDetails(profileToUse);
-              } catch (error) {
-                console.error(
-                  "Unable to load the customer wallet profile.",
-                  error,
-                );
-                customerDetailsRef.current = emptyCustomerProfile;
-                setCustomerDetails(emptyCustomerProfile);
-                setProfileError(
-                  "Saved profile details could not be loaded. Update the fields and save again.",
-                );
-              } finally {
                 setProfileAccountId(nextAccountId);
-              }
             }
           }
           const requestId = ++walletRequestIdRef.current;
@@ -926,7 +829,9 @@ function PaymentPortal() {
       return;
     }
 
-    if (!saveCustomerProfile()) {
+    const customerValidationError = validateCustomerProfile(customerDetails);
+    if (customerValidationError) {
+      setProfileError(customerValidationError);
       return;
     }
 
@@ -960,31 +865,6 @@ function PaymentPortal() {
           "The wallet did not return a transaction hash yet. Check the wallet activity and reconnect if the transaction was not submitted.",
         );
         return;
-      }
-
-      try {
-        savePaymentRecord({
-          date: new Date().toISOString(),
-          fiatAmount,
-          fiatCurrency,
-          usdcAmount: invoice.usdcAmount || amount,
-          token: "NEAR",
-          tokenAmount: amount,
-          items: invoice.items,
-          storeName: invoice.storeName,
-          merchantAccountId: merchant,
-          senderAccountId: accountId,
-          customerName: customerDetails.name.trim(),
-          customerEmail: customerDetails.email.trim(),
-          customerMobile: customerDetails.mobile.trim(),
-          transactionHash: hash,
-          status: "Pending",
-        });
-      } catch (error) {
-        console.error("Unable to save the pending customer payment.", error);
-        setHistorySaveError(
-          "Payment was submitted, but its pending status could not be saved in this browser.",
-        );
       }
 
       await verifyPayment(hash, accountId);
@@ -1321,8 +1201,10 @@ function PaymentPortal() {
                         </span>
                       </span>
                       <span className="shrink-0 text-right font-semibold">
-                        INR{" "}
-                        {(item.unitPriceInr * item.quantity).toFixed(2)}
+                        {item.fiatCurrency ?? "INR"}{" "}
+                        {(
+                          (item.unitPrice ?? item.unitPriceInr) * item.quantity
+                        ).toFixed(2)}
                       </span>
                     </li>
                   ))}
@@ -1383,7 +1265,7 @@ function PaymentPortal() {
                 </p>
               </div>
               <span className="border border-neutral-300 px-2 py-1 text-[10px] font-bold uppercase tracking-widest">
-                {accountId ? (profileLoaded ? "Wallet profile" : "Loading") : "Checkout"}
+                {accountId ? (profileLoaded ? "Checkout details" : "Loading") : "Checkout"}
               </span>
             </div>
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -1445,23 +1327,9 @@ function PaymentPortal() {
                 {customerDetailsError}
               </p>
             ) : null}
-            {profileMessage ? (
-              <p role="status" className="mt-4 text-sm font-medium">
-                {profileMessage}
-              </p>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => void saveCustomerProfile()}
-              disabled={!accountId || !profileLoaded || isSavingProfile}
-              className="mt-5 border border-black px-4 py-3 text-sm font-bold transition hover:bg-black hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isSavingProfile ? "Saving profile..." : "Save profile"}
-            </button>
             <p className="mt-3 text-xs leading-5 text-neutral-500">
-              {accountId
-                ? "Profile storage is local to this browser. The merchant receives these details only with your wallet-authorized, verified payment."
-                : "Connect your wallet to save these details to its local profile. Your contact fields remain editable until then."}
+              Your details are not saved in this browser. They are sent to the
+              merchant with your wallet-authorized, verified payment.
             </p>
           </section>
         

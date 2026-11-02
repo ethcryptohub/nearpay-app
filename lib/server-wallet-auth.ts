@@ -6,9 +6,17 @@ import {
   type SignedMessage,
 } from "@near-wallet-selector/core";
 import { isValidNearAccountId } from "./merchant-settings";
-import { getSupabaseAdmin } from "./supabase-admin";
+import {
+  getSupabaseAdmin,
+  getSupabaseOperationError,
+} from "./supabase-admin";
 
-export type WalletChallengePurpose = "merchant-history" | "payment-record";
+export type WalletChallengePurpose =
+  | "merchant-history"
+  | "merchant-catalog"
+  | "merchant-settings"
+  | "merchant-transaction"
+  | "payment-record";
 
 export type WalletChallenge = {
   id: string;
@@ -54,7 +62,7 @@ export async function createWalletChallenge(
   }
   if (
     (purpose === "payment-record" && (!transactionHash || !receiptDigest)) ||
-    (purpose === "merchant-history" && (transactionHash || receiptDigest))
+    (purpose !== "payment-record" && (transactionHash || receiptDigest))
   ) {
     throw new Error("Wallet challenge fields do not match the requested purpose.");
   }
@@ -89,7 +97,10 @@ export async function createWalletChallenge(
     .single();
 
   if (insertError) {
-    throw new Error(`Unable to create a wallet challenge: ${insertError.message}`);
+    throw getSupabaseOperationError(
+      "Unable to create a wallet challenge",
+      insertError,
+    );
   }
 
   const message = [
@@ -108,7 +119,10 @@ export async function createWalletChallenge(
     .single();
 
   if (updateError) {
-    throw new Error(`Unable to finalize a wallet challenge: ${updateError.message}`);
+    throw getSupabaseOperationError(
+      "Unable to finalize a wallet challenge",
+      updateError,
+    );
   }
   return updated as WalletChallenge;
 }
@@ -139,7 +153,10 @@ export async function consumeAndVerifyWalletChallenge({
     .maybeSingle();
 
   if (consumeError) {
-    throw new Error(`Unable to validate wallet challenge: ${consumeError.message}`);
+    throw getSupabaseOperationError(
+      "Unable to validate wallet challenge",
+      consumeError,
+    );
   }
   if (!challenge) {
     throw new Error("Wallet challenge is invalid, expired, or already used.");

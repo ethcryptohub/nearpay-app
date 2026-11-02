@@ -1,6 +1,5 @@
 "use client";
 
-import { Buffer } from "buffer";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { WalletSelector } from "@near-wallet-selector/core";
@@ -8,45 +7,14 @@ import { setupModal, type WalletSelectorModal } from "@near-wallet-selector/moda
 import Sidebar from "../../../components/Sidebar";
 import {
   isPaymentRecord,
-  paymentHistoryStorageKey,
   type PaymentRecord,
 } from "../../../lib/payment-history";
 import {
   defaultMerchantSettings,
-  merchantSettingsStorageKey,
-  parseMerchantSettings,
 } from "../../../lib/merchant-settings";
 import { getWalletSelector } from "../../../lib/near-wallet-selector";
-
-function mergePaymentRecords(
-  localRecords: PaymentRecord[],
-  sharedRecords: PaymentRecord[],
-): PaymentRecord[] {
-  const recordsByHash = new Map<string, PaymentRecord>();
-  const recordsWithoutHash: PaymentRecord[] = [];
-
-  for (const record of localRecords) {
-    if (record.transactionHash) {
-      recordsByHash.set(record.transactionHash, record);
-    } else {
-      recordsWithoutHash.push(record);
-    }
-  }
-  for (const record of sharedRecords) {
-    if (record.transactionHash) {
-      recordsByHash.set(record.transactionHash, {
-        ...recordsByHash.get(record.transactionHash),
-        ...record,
-      });
-    } else {
-      recordsWithoutHash.push(record);
-    }
-  }
-
-  return [...recordsByHash.values(), ...recordsWithoutHash].sort(
-    (left, right) => Date.parse(right.date) - Date.parse(left.date),
-  );
-}
+import { loadMerchantSettings } from "../../../lib/merchant-data";
+import { signMerchantAuthorization } from "../../../lib/merchant-authorization";
 
 function readApiError(value: unknown, fallback: string): string {
   return typeof value === "object" &&
@@ -78,52 +46,27 @@ export default function HistoryPage() {
     let active = true;
     let unsubscribe: (() => void) | undefined;
 
-    async function loadLocalData() {
+    async function loadMerchantPreferences() {
       await Promise.resolve();
       if (!active) {
         return;
       }
 
-      let configuredMerchantAccountId: string;
       try {
-        configuredMerchantAccountId = parseMerchantSettings(
-          localStorage.getItem(merchantSettingsStorageKey),
-        ).merchantAccountId;
-        setMerchantAccountId(configuredMerchantAccountId);
+        const settings = await loadMerchantSettings(
+          defaultMerchantSettings.merchantAccountId,
+        );
+        if (active) setMerchantAccountId(settings.merchantAccountId);
       } catch (error) {
-        console.error("Unable to load the merchant account for history.", error);
+        console.error("Unable to load merchant settings for history.", error);
         setHistoryError(
-          "Save a valid merchant account in Settings before viewing history.",
+          error instanceof Error
+            ? error.message
+            : "Merchant settings could not be loaded from Supabase.",
         );
-        return;
-      }
-
-      try {
-        const savedHistory = localStorage.getItem(paymentHistoryStorageKey);
-        const parsedHistory: unknown = savedHistory
-          ? JSON.parse(savedHistory)
-          : [];
-        if (
-          !Array.isArray(parsedHistory) ||
-          !parsedHistory.every(isPaymentRecord)
-        ) {
-          throw new Error("Saved transaction history has an invalid format.");
-        }
-        setTransactions(
-          parsedHistory.filter(
-            (record) =>
-              record.merchantAccountId === configuredMerchantAccountId,
-          ),
-        );
-      } catch (error) {
-        console.error(
-          "Unable to load transaction history from browser storage.",
-          error,
-        );
-        setHistoryError("Local transaction history could not be loaded.");
       }
     }
-    void loadLocalData();
+    void loadMerchantPreferences();
 
     getWalletSelector()
       .then((walletSelector) => {
@@ -167,6 +110,29 @@ export default function HistoryPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!connectedAccountId || connectedAccountId === merchantAccountId) return;
+    let active = true;
+    setTransactions([]);
+    void loadMerchantSettings(connectedAccountId)
+      .then((settings) => {
+        if (active) setMerchantAccountId(settings.merchantAccountId);
+      })
+      .catch((error: unknown) => {
+        console.error("Unable to load connected merchant settings.", error);
+        if (active) {
+          setHistoryError(
+            error instanceof Error
+              ? error.message
+              : "Merchant settings could not be loaded from Supabase.",
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [connectedAccountId, merchantAccountId]);
+
   async function syncSharedHistory() {
     if (
       !selector ||
@@ -181,52 +147,17 @@ export default function HistoryPage() {
     setHistoryError(null);
     setSyncMessage("");
     try {
-      const wallet = await selector.wallet();
-      if (!wallet.signMessage) {
-        throw new Error("This wallet does not support secure history authorization.");
-      }
-
-      const challengeResponse = await fetch("/api/wallet-challenge", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accountId: connectedAccountId,
-          purpose: "merchant-history",
-        }),
-      });
-      const challenge: unknown = await challengeResponse.json();
-      if (
-        !challengeResponse.ok ||
-        typeof challenge !== "object" ||
-        challenge === null ||
-        !("challengeId" in challenge) ||
-        typeof challenge.challengeId !== "string" ||
-        !("message" in challenge) ||
-        typeof challenge.message !== "string" ||
-        !("nonce" in challenge) ||
-        typeof challenge.nonce !== "string" ||
-        !("recipient" in challenge) ||
-        typeof challenge.recipient !== "string"
-      ) {
-        throw new Error(readApiError(challenge, "Could not authorize history access."));
-      }
-
-      const signedMessage = await wallet.signMessage({
-        message: challenge.message,
-        nonce: Buffer.from(challenge.nonce, "base64"),
-        recipient: challenge.recipient,
-      });
-      if (!signedMessage) {
-        throw new Error("The wallet did not return a merchant authorization signature.");
-      }
+      const authorization = await signMerchantAuthorization(
+        selector,
+        connectedAccountId,
+        "merchant-history",
+      );
 
       const historyResponse = await fetch("/api/merchant-history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          challengeId: challenge.challengeId,
-          accountId: connectedAccountId,
-          signedMessage,
+          ...authorization,
         }),
       });
       const result: unknown = await historyResponse.json();
@@ -241,22 +172,7 @@ export default function HistoryPage() {
         throw new Error(readApiError(result, "Shared merchant history could not be loaded."));
       }
 
-      const mergedRecords = mergePaymentRecords(
-        transactions,
-        result.records as PaymentRecord[],
-      );
-      setTransactions(mergedRecords);
-      try {
-        localStorage.setItem(
-          paymentHistoryStorageKey,
-          JSON.stringify(mergedRecords),
-        );
-      } catch (error) {
-        console.error("Unable to cache shared history in this browser.", error);
-        setHistoryError(
-          "Shared history loaded, but could not be cached in this browser.",
-        );
-      }
+      setTransactions(result.records as PaymentRecord[]);
       setSyncMessage(`Loaded ${result.records.length} verified shared transaction(s).`);
     } catch (error) {
       console.error("Unable to synchronize shared merchant history.", error);
@@ -283,8 +199,8 @@ export default function HistoryPage() {
               02 / TRANSACTIONS
             </h1>
             <p className="mt-3 text-sm text-neutral-600">
-              Local records are stored in this browser. Sign with the merchant
-              wallet to load verified payments and customer details from Supabase.
+              Verified transactions are stored in Supabase. Sign with the
+              merchant wallet to load payment and customer details.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">

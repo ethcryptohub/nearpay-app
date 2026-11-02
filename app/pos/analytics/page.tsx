@@ -1,17 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { WalletSelector } from "@near-wallet-selector/core";
+import { setupModal, type WalletSelectorModal } from "@near-wallet-selector/modal-ui";
 import Sidebar from "../../../components/Sidebar";
 import {
   isPaymentRecord,
-  paymentHistoryStorageKey,
   type PaymentRecord,
 } from "../../../lib/payment-history";
 import {
   defaultMerchantSettings,
-  merchantSettingsStorageKey,
-  parseMerchantSettings,
 } from "../../../lib/merchant-settings";
+import { loadMerchantSettings } from "../../../lib/merchant-data";
+import { signMerchantAuthorization } from "../../../lib/merchant-authorization";
+import { getWalletSelector } from "../../../lib/near-wallet-selector";
 
 type DailySales = {
   day: string;
@@ -32,48 +34,145 @@ export default function AnalyticsPage() {
   const [merchantAccountId, setMerchantAccountId] = useState(
     defaultMerchantSettings.merchantAccountId,
   );
+  const [connectedAccountId, setConnectedAccountId] = useState<string | null>(null);
+  const [selector, setSelector] = useState<WalletSelector | null>(null);
+  const [walletModal, setWalletModal] = useState<WalletSelectorModal | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [syncMessage, setSyncMessage] = useState("");
 
   useEffect(() => {
     let active = true;
-    async function loadAnalytics() {
-      await Promise.resolve();
-      try {
-        const settings = parseMerchantSettings(
-          localStorage.getItem(merchantSettingsStorageKey),
-        );
-        if (active) {
-          setMerchantAccountId(settings.merchantAccountId);
-        }
+    let unsubscribe: (() => void) | undefined;
 
-        const saved = localStorage.getItem(paymentHistoryStorageKey);
-        const parsed: unknown = saved ? JSON.parse(saved) : [];
-        if (!Array.isArray(parsed) || !parsed.every(isPaymentRecord)) {
-          throw new Error("Saved transaction history has an invalid format.");
-        }
-        if (active) {
-          setTransactions(
-            parsed.filter(
-              (record) =>
-                record.merchantAccountId === settings.merchantAccountId,
-            ),
-          );
-        }
-      } catch (loadError) {
-        console.error("Unable to load sales analytics.", loadError);
-        if (active) {
-          setError(
-            "Sales data or merchant settings could not be read from this browser.",
-          );
-        }
+    async function initializeAnalytics() {
+      const [settingsResult, selectorResult] = await Promise.allSettled([
+        loadMerchantSettings(defaultMerchantSettings.merchantAccountId),
+        getWalletSelector(),
+      ]);
+      if (!active) return;
+
+      if (settingsResult.status === "fulfilled") {
+        setMerchantAccountId(settingsResult.value.merchantAccountId);
+      } else {
+        console.error("Unable to load analytics merchant settings.", settingsResult.reason);
+        setError(
+          settingsResult.reason instanceof Error
+            ? settingsResult.reason.message
+            : "Merchant settings could not be loaded from Supabase.",
+        );
       }
+
+      if (selectorResult.status === "fulfilled") {
+        const walletSelector = selectorResult.value;
+        setSelector(walletSelector);
+        setWalletModal(
+          setupModal(walletSelector, {
+            theme: "light",
+            description: "Authorize access to this merchant's sales analytics.",
+          }),
+        );
+        const syncAccount = () => {
+          const accounts = walletSelector.store.getState().accounts;
+          setConnectedAccountId(
+            accounts.find((account) => account.active)?.accountId ??
+              accounts[0]?.accountId ??
+              null,
+          );
+        };
+        syncAccount();
+        const subscription =
+          walletSelector.store.observable.subscribe(syncAccount);
+        unsubscribe = () => subscription.unsubscribe();
+      } else {
+        console.error("Unable to initialize the analytics merchant wallet.", selectorResult.reason);
+        setError("NEAR wallet authorization could not be initialized.");
+      }
+      setIsLoading(false);
     }
-    void loadAnalytics();
+    void initializeAnalytics();
     return () => {
       active = false;
+      unsubscribe?.();
     };
   }, []);
 
+  useEffect(() => {
+    if (!connectedAccountId || connectedAccountId === merchantAccountId) return;
+    let active = true;
+    setTransactions([]);
+    void loadMerchantSettings(connectedAccountId)
+      .then((settings) => {
+        if (active) setMerchantAccountId(settings.merchantAccountId);
+      })
+      .catch((loadError: unknown) => {
+        console.error("Unable to load connected merchant settings.", loadError);
+        if (active) {
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : "Merchant settings could not be loaded from Supabase.",
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [connectedAccountId, merchantAccountId]);
+
+  async function syncAnalytics() {
+    if (!selector || !connectedAccountId || connectedAccountId !== merchantAccountId) {
+      setError("Connect the configured merchant NEAR wallet to load analytics.");
+      walletModal?.show();
+      return;
+    }
+
+    setIsSyncing(true);
+    setError(null);
+    setSyncMessage("");
+    try {
+      const authorization = await signMerchantAuthorization(
+        selector,
+        connectedAccountId,
+        "merchant-history",
+      );
+      const response = await fetch("/api/merchant-history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(authorization),
+      });
+      const result: unknown = await response.json();
+      if (
+        !response.ok ||
+        typeof result !== "object" ||
+        result === null ||
+        !("records" in result) ||
+        !Array.isArray(result.records) ||
+        !result.records.every(isPaymentRecord)
+      ) {
+        const message =
+          typeof result === "object" &&
+          result !== null &&
+          "error" in result &&
+          typeof result.error === "string"
+            ? result.error
+            : "Verified sales could not be loaded from Supabase.";
+        throw new Error(message);
+      }
+      setTransactions(result.records);
+      setSyncMessage(`Loaded ${result.records.length} verified transaction(s) from Supabase.`);
+    } catch (syncError) {
+      console.error("Unable to load analytics from Supabase.", syncError);
+      setError(
+        syncError instanceof Error
+          ? syncError.message
+          : "Verified sales could not be loaded from Supabase.",
+      );
+    } finally {
+      setIsSyncing(false);
+    }
+  }
   const settledTransactions = useMemo(
     () =>
       transactions.filter(
@@ -130,9 +229,42 @@ export default function AnalyticsPage() {
           04 / ANALYTICS
         </h1>
         <p className="mt-4 text-sm text-neutral-600">
-          Verified sales for {merchantAccountId}, saved in this browser.
+          Verified sales for {merchantAccountId}, securely loaded from Supabase.
           Pending and failed transactions are excluded from revenue.
         </p>
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border border-neutral-300 bg-white p-4">
+          <div className="text-sm">
+            {isLoading
+              ? "Loading merchant settings and wallet..."
+              : connectedAccountId === merchantAccountId
+                ? "Merchant wallet authorized for analytics."
+                : "Connect the configured merchant wallet to load sales."}
+            {syncMessage ? (
+              <p role="status" className="mt-2 text-xs text-neutral-600">
+                {syncMessage}
+              </p>
+            ) : null}
+          </div>
+          {connectedAccountId === merchantAccountId ? (
+            <button
+              type="button"
+              onClick={() => void syncAnalytics()}
+              disabled={isLoading || isSyncing}
+              className="bg-black px-4 py-3 text-xs font-bold uppercase tracking-widest text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isSyncing ? "Loading..." : "Load Supabase Sales"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => walletModal?.show()}
+              disabled={isLoading || !walletModal}
+              className="border border-black px-4 py-3 text-xs font-bold uppercase tracking-widest disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Connect Merchant Wallet
+            </button>
+          )}
+        </div>
         {error ? (
           <p role="alert" className="mt-6 text-sm text-red-700">{error}</p>
         ) : null}
@@ -210,8 +342,8 @@ export default function AnalyticsPage() {
             </ul>
           ) : (
             <p className="py-8 text-sm text-neutral-500">
-              No successful sales for this merchant have been recorded in this
-              browser yet.
+              No sales have been loaded. Authorize the merchant wallet to read
+              verified transactions from Supabase.
             </p>
           )}
         </section>
