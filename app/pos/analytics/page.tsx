@@ -12,7 +12,10 @@ import {
   defaultMerchantSettings,
 } from "../../../lib/merchant-settings";
 import { loadMerchantSettings } from "../../../lib/merchant-data";
-import { signMerchantAuthorization } from "../../../lib/merchant-authorization";
+import {
+  getMerchantSession,
+  signMerchantAuthorization,
+} from "../../../lib/merchant-authorization";
 import { getWalletSelector } from "../../../lib/near-wallet-selector";
 
 type DailySales = {
@@ -31,6 +34,9 @@ function getTokenAmount(record: PaymentRecord, token: "NEAR" | "USDC"): number {
 
 export default function AnalyticsPage() {
   const [transactions, setTransactions] = useState<PaymentRecord[]>([]);
+  const [transactionsAccountId, setTransactionsAccountId] = useState<
+    string | null
+  >(null);
   const [merchantAccountId, setMerchantAccountId] = useState(
     defaultMerchantSettings.merchantAccountId,
   );
@@ -40,6 +46,13 @@ export default function AnalyticsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [merchantSettingsAvailable, setMerchantSettingsAvailable] =
+    useState(false);
+  const [merchantSessionAccountId, setMerchantSessionAccountId] = useState<
+    string | null
+  >(null);
+  const [isCheckingMerchantSession, setIsCheckingMerchantSession] =
+    useState(false);
   const syncAttemptRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -55,6 +68,7 @@ export default function AnalyticsPage() {
 
       if (settingsResult.status === "fulfilled") {
         setMerchantAccountId(settingsResult.value.merchantAccountId);
+        setMerchantSettingsAvailable(true);
       } else {
         console.error("Unable to load analytics merchant settings.", settingsResult.reason);
         setError(
@@ -62,6 +76,7 @@ export default function AnalyticsPage() {
             ? settingsResult.reason.message
             : "Merchant settings could not be loaded from Supabase.",
         );
+        setMerchantSettingsAvailable(false);
       }
 
       if (selectorResult.status === "fulfilled") {
@@ -101,18 +116,23 @@ export default function AnalyticsPage() {
   useEffect(() => {
     if (!connectedAccountId) {
       setTransactions([]);
+      setTransactionsAccountId(null);
       return;
     }
-    if (connectedAccountId === merchantAccountId) return;
     let active = true;
     setTransactions([]);
+    setTransactionsAccountId(null);
     void loadMerchantSettings(connectedAccountId)
       .then((settings) => {
-        if (active) setMerchantAccountId(settings.merchantAccountId);
+        if (active) {
+          setMerchantAccountId(settings.merchantAccountId);
+          setMerchantSettingsAvailable(true);
+        }
       })
       .catch((loadError: unknown) => {
         console.error("Unable to load connected merchant settings.", loadError);
         if (active) {
+          setMerchantSettingsAvailable(false);
           setError(
             loadError instanceof Error
               ? loadError.message
@@ -123,9 +143,48 @@ export default function AnalyticsPage() {
     return () => {
       active = false;
     };
-  }, [connectedAccountId, merchantAccountId]);
+  }, [connectedAccountId]);
 
-  const syncAnalytics = useCallback(async () => {
+  useEffect(() => {
+    if (
+      !connectedAccountId ||
+      connectedAccountId !== merchantAccountId ||
+      !merchantSettingsAvailable
+    ) {
+      return;
+    }
+
+    let active = true;
+    setIsCheckingMerchantSession(true);
+    void getMerchantSession(connectedAccountId)
+      .then((authenticated) => {
+        if (active) {
+          setMerchantSessionAccountId(
+            authenticated ? connectedAccountId : null,
+          );
+        }
+      })
+      .catch((sessionError: unknown) => {
+        console.error("Unable to check the merchant analytics session.", sessionError);
+        if (active) {
+          setMerchantSessionAccountId(null);
+          setError(
+            sessionError instanceof Error
+              ? sessionError.message
+              : "Unable to check the merchant session.",
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setIsCheckingMerchantSession(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [connectedAccountId, merchantAccountId, merchantSettingsAvailable]);
+
+  const syncAnalytics = useCallback(async (authorize = false) => {
     if (!selector || !connectedAccountId || connectedAccountId !== merchantAccountId) {
       setError("Connect the configured merchant NEAR wallet to load analytics.");
       walletModal?.show();
@@ -134,11 +193,16 @@ export default function AnalyticsPage() {
     setIsSyncing(true);
     setError(null);
     try {
-      const authorization = await signMerchantAuthorization(
-        selector,
-        connectedAccountId,
-        "merchant-history",
-      );
+      if (authorize) {
+        await signMerchantAuthorization(selector, connectedAccountId);
+      } else if (!(await getMerchantSession(connectedAccountId))) {
+        setMerchantSessionAccountId(null);
+        setError("Merchant session expired. Authorize the wallet to continue.");
+        return;
+      }
+      const authorization = { accountId: connectedAccountId };
+      setMerchantSessionAccountId(connectedAccountId);
+      syncAttemptRef.current = `${connectedAccountId}:${merchantAccountId}`;
       const response = await fetch("/api/merchant-history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -169,6 +233,7 @@ export default function AnalyticsPage() {
         null;
       if (activeAccountId === connectedAccountId) {
         setTransactions(result.records);
+        setTransactionsAccountId(connectedAccountId);
       }
     } catch (syncError) {
       console.error("Unable to load analytics from Supabase.", syncError);
@@ -188,7 +253,12 @@ export default function AnalyticsPage() {
       return;
     }
 
-    if (isLoading || !selector) {
+    if (
+      isLoading ||
+      !selector ||
+      !merchantSettingsAvailable ||
+      merchantSessionAccountId !== connectedAccountId
+    ) {
       return;
     }
 
@@ -201,18 +271,28 @@ export default function AnalyticsPage() {
   }, [
     connectedAccountId,
     isLoading,
+    merchantSettingsAvailable,
+    merchantSessionAccountId,
     merchantAccountId,
     selector,
     syncAnalytics,
   ]);
+  const visibleTransactions = useMemo(
+    () =>
+      connectedAccountId === merchantAccountId &&
+      transactionsAccountId === connectedAccountId
+        ? transactions
+        : [],
+    [connectedAccountId, merchantAccountId, transactions, transactionsAccountId],
+  );
   const settledTransactions = useMemo(
     () =>
-      transactions.filter(
+      visibleTransactions.filter(
         (transaction) =>
           transaction.status === "Success" &&
           transaction.merchantAccountId === merchantAccountId,
       ),
-    [merchantAccountId, transactions],
+    [merchantAccountId, visibleTransactions],
   );
 
   const dailySales = useMemo(() => {
@@ -269,15 +349,32 @@ export default function AnalyticsPage() {
             {isLoading
               ? "Loading merchant settings and wallet..."
               : connectedAccountId === merchantAccountId
-                ? isSyncing
-                  ? "Authorizing and loading sales from Supabase..."
-                  : transactions.length > 0
-                    ? `${transactions.length} verified transaction(s) loaded from Supabase.`
-                    : "Sales are loaded automatically after merchant authorization."
+                ? merchantSessionAccountId !== connectedAccountId
+                  ? isCheckingMerchantSession
+                    ? "Checking merchant session..."
+                    : "Authorize the merchant wallet to load sales."
+                  : isSyncing
+                    ? "Loading sales from Supabase..."
+                    : transactions.length > 0
+                      ? `${transactions.length} verified transaction(s) loaded from Supabase.`
+                      : "Sales are loaded automatically after merchant authorization."
                 : "Connect the configured merchant wallet to load sales."}
           </div>
           {connectedAccountId === merchantAccountId ? (
-            error ? (
+            merchantSessionAccountId !== connectedAccountId ? (
+              <button
+                type="button"
+                onClick={() => void syncAnalytics(true)}
+                disabled={isSyncing || isCheckingMerchantSession}
+                className="border border-black px-4 py-2 text-xs font-bold uppercase tracking-wider transition hover:bg-black hover:text-white disabled:opacity-50"
+              >
+                {isCheckingMerchantSession
+                  ? "Checking session..."
+                  : isSyncing
+                    ? "Authorizing..."
+                    : "Authorize & load sales"}
+              </button>
+            ) : error ? (
               <button
                 type="button"
                 onClick={() => void syncAnalytics()}

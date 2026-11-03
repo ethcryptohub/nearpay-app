@@ -1,13 +1,10 @@
 import { NextResponse } from "next/server";
-import type { SignedMessage } from "@near-wallet-selector/core";
 import {
   formatInvoiceNumber,
   isPaymentRecord,
   type PaymentRecord,
 } from "../../../lib/payment-history";
-import {
-  consumeAndVerifyWalletChallenge,
-} from "../../../lib/server-wallet-auth";
+import { getMerchantSessionAccountId } from "../../../lib/server-merchant-session";
 import {
   getSupabaseAdmin,
   getSupabaseOperationError,
@@ -46,29 +43,18 @@ export async function POST(request: Request) {
     const body: unknown = await request.json();
     if (
       !isRecord(body) ||
-      typeof body.challengeId !== "string" ||
       typeof body.accountId !== "string" ||
-      !isRecord(body.signedMessage) ||
-      typeof body.signedMessage.accountId !== "string" ||
-      typeof body.signedMessage.publicKey !== "string" ||
-      typeof body.signedMessage.signature !== "string"
+      body.accountId.length === 0
     ) {
       return NextResponse.json({ error: "Invalid merchant authorization." }, { status: 400 });
     }
 
-    const signedMessage: SignedMessage = {
-      accountId: body.signedMessage.accountId,
-      publicKey: body.signedMessage.publicKey,
-      signature: body.signedMessage.signature,
-    };
-    await consumeAndVerifyWalletChallenge({
-      challengeId: body.challengeId,
-      accountId: body.accountId,
-      purpose: "merchant-history",
-      transactionHash: null,
-      receiptDigest: null,
-      signedMessage,
-    });
+    if (getMerchantSessionAccountId(request) !== body.accountId) {
+      return NextResponse.json(
+        { error: "Authorize this merchant wallet to view its history." },
+        { status: 401 },
+      );
+    }
 
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase

@@ -34,7 +34,10 @@ import {
 } from "../../lib/token-rates";
 import type { ReceiptItem } from "../../lib/payment-history";
 import { getWalletSelector } from "../../lib/near-wallet-selector";
-import { signMerchantAuthorization } from "../../lib/merchant-authorization";
+import {
+  getMerchantSession,
+  signMerchantAuthorization,
+} from "../../lib/merchant-authorization";
 
 type CartLine = {
   productId: string;
@@ -139,6 +142,7 @@ export default function POSPage() {
     string | null
   >(null);
   const [products, setProducts] = useState<MerchantProduct[]>([]);
+  const [productsAccountId, setProductsAccountId] = useState<string | null>(null);
   const [productsLoaded, setProductsLoaded] = useState(false);
   const [productsError, setProductsError] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -156,6 +160,13 @@ export default function POSPage() {
   const [walletInitializing, setWalletInitializing] = useState(true);
   const [walletError, setWalletError] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [merchantSessionAccountId, setMerchantSessionAccountId] = useState<
+    string | null
+  >(null);
+  const [isCheckingMerchantSession, setIsCheckingMerchantSession] =
+    useState(false);
+  const [isAuthorizingMerchantSession, setIsAuthorizingMerchantSession] =
+    useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPreparingInvoice, setIsPreparingInvoice] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<"pending" | "success">(
@@ -173,10 +184,19 @@ export default function POSPage() {
   const completedTransactionHashes = useRef(new Set<string>());
 
   const merchantAccountId = merchantSettings.merchantAccountId;
+  const isConnectedMerchant = connectedAccountId === merchantAccountId;
+  const hasMerchantSession =
+    connectedAccountId !== null &&
+    merchantSessionAccountId === connectedAccountId;
   const hasMerchantAccess =
     settingsLoaded &&
     !merchantSettingsError &&
-    connectedAccountId === merchantAccountId;
+    isConnectedMerchant &&
+    hasMerchantSession;
+  const visibleProducts =
+    hasMerchantAccess && productsAccountId === connectedAccountId
+      ? products
+      : [];
 
   const persistObservedTransaction = useCallback(async (
     invoice: ActiveInvoice,
@@ -192,7 +212,7 @@ export default function POSPage() {
     const authorization = await signMerchantAuthorization(
       walletSelector,
       invoice.merchantAccountId,
-      "merchant-transaction",
+      false,
     );
     const response = await fetch("/api/merchant-transactions", {
       method: "POST",
@@ -258,6 +278,7 @@ export default function POSPage() {
         const savedProducts = await loadMerchantProducts(accountId);
         if (active) {
           setProducts(savedProducts);
+          setProductsAccountId(accountId);
           setProductsError(null);
         }
       } catch (error) {
@@ -290,6 +311,9 @@ export default function POSPage() {
     let active = true;
     setSettingsLoaded(false);
     setProductsLoaded(false);
+    setProducts([]);
+    setProductsAccountId(null);
+    setCart([]);
     setMerchantSettingsError(null);
     setProductsError(null);
 
@@ -302,6 +326,7 @@ export default function POSPage() {
         setMerchantSettings(savedSettings);
         setFiatCurrency(savedSettings.fiatCurrency);
         setProducts(savedProducts);
+        setProductsAccountId(connectedAccountId);
       })
       .catch((error: unknown) => {
         console.error("Unable to load data for the connected merchant.", error);
@@ -326,10 +351,55 @@ export default function POSPage() {
     };
   }, [connectedAccountId, merchantSettings.merchantAccountId]);
 
+  useEffect(() => {
+    if (
+      !connectedAccountId ||
+      connectedAccountId !== merchantAccountId ||
+      !settingsLoaded ||
+      merchantSettingsError
+    ) {
+      return;
+    }
+
+    let active = true;
+    setIsCheckingMerchantSession(true);
+    void getMerchantSession(connectedAccountId)
+      .then((authenticated) => {
+        if (active) {
+          setMerchantSessionAccountId(
+            authenticated ? connectedAccountId : null,
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        console.error("Unable to check the merchant session.", error);
+        if (active) {
+          setMerchantSessionAccountId(null);
+          setWalletError(
+            error instanceof Error
+              ? error.message
+              : "Unable to check the merchant authorization session.",
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setIsCheckingMerchantSession(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    connectedAccountId,
+    merchantAccountId,
+    merchantSettingsError,
+    settingsLoaded,
+  ]);
+
   const cartRows = cart
     .map((line) => ({
       ...line,
-      product: products.find((product) => product.id === line.productId),
+      product: visibleProducts.find((product) => product.id === line.productId),
     }))
     .filter(
       (
@@ -681,9 +751,19 @@ export default function POSPage() {
     setIsSigningOut(true);
     setWalletError(null);
     try {
+      const sessionResponse = await fetch("/api/merchant-session", {
+        method: "DELETE",
+      });
+      if (!sessionResponse.ok) {
+        throw new Error("The merchant session could not be cleared.");
+      }
+      setMerchantSessionAccountId(null);
       const wallet = await walletSelector.wallet();
       await wallet.signOut();
       setConnectedAccountId(null);
+      setProducts([]);
+      setProductsAccountId(null);
+      setCart([]);
       setIsModalOpen(false);
       setActiveInvoice(null);
     } catch (error) {
@@ -695,6 +775,40 @@ export default function POSPage() {
       );
     } finally {
       setIsSigningOut(false);
+    }
+  }
+
+  async function handleAuthorizeMerchantSession() {
+    if (
+      !walletSelector ||
+      !connectedAccountId ||
+      connectedAccountId !== merchantAccountId
+    ) {
+      setWalletError("Connect the configured merchant wallet to authorize access.");
+      return;
+    }
+
+    setIsAuthorizingMerchantSession(true);
+    setWalletError(null);
+    try {
+      await signMerchantAuthorization(walletSelector, connectedAccountId);
+      const activeAccountId =
+        walletSelector.store.getState().accounts.find((account) => account.active)
+          ?.accountId ??
+        walletSelector.store.getState().accounts[0]?.accountId ??
+        null;
+      if (activeAccountId === connectedAccountId) {
+        setMerchantSessionAccountId(connectedAccountId);
+      }
+    } catch (error) {
+      console.error("Unable to authorize the merchant session.", error);
+      setWalletError(
+        error instanceof Error
+          ? error.message
+          : "Unable to authorize the merchant session.",
+      );
+    } finally {
+      setIsAuthorizingMerchantSession(false);
     }
   }
 
@@ -808,6 +922,23 @@ export default function POSPage() {
             ) : null}
             {walletInitializing ? (
               <p className="mt-8 text-sm font-semibold">Loading wallet options...</p>
+            ) : isConnectedMerchant ? (
+              isCheckingMerchantSession ? (
+                <p role="status" className="mt-8 text-sm font-semibold">
+                  Checking merchant session...
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void handleAuthorizeMerchantSession()}
+                  disabled={!walletSelector || isAuthorizingMerchantSession}
+                  className="mt-8 w-full rounded-xl bg-[#ff9f1c] px-6 py-4 text-sm font-bold text-[#121633] transition hover:bg-[#f39200] disabled:cursor-not-allowed disabled:bg-[#d6dae6] disabled:text-[#8a90a8]"
+                >
+                  {isAuthorizingMerchantSession
+                    ? "Authorizing..."
+                    : "Authorize Merchant Session"}
+                </button>
+              )
             ) : (
               <button
                 type="button"
@@ -820,20 +951,25 @@ export default function POSPage() {
                 disabled={!walletSelector || !walletModal}
                 className="mt-8 w-full rounded-xl bg-[#ff9f1c] px-6 py-4 text-sm font-bold text-[#121633] transition hover:bg-[#f39200] disabled:cursor-not-allowed disabled:bg-[#d6dae6] disabled:text-[#8a90a8]"
               >
-                {connectedAccountId
-                  ? "Choose Merchant Wallet"
-                  : "Sign In as Merchant"}
+                {connectedAccountId ? "Choose Merchant Wallet" : "Sign In as Merchant"}
               </button>
             )}
             {connectedAccountId ? (
               <div role="alert" className="mt-5 border-l-2 border-black pl-3 text-sm">
-                <p>
-                  Connected account{" "}
-                  <span className="break-all font-mono font-semibold">
-                    {connectedAccountId}
-                  </span>{" "}
-                  is not authorized for this merchant POS.
-                </p>
+                {isConnectedMerchant ? (
+                  <p>
+                    Authorize this wallet once to access merchant data across
+                    POS tabs and future visits.
+                  </p>
+                ) : (
+                  <p>
+                    Connected account{" "}
+                    <span className="break-all font-mono font-semibold">
+                      {connectedAccountId}
+                    </span>{" "}
+                    is not authorized for this merchant POS.
+                  </p>
+                )}
                 <button
                   type="button"
                   onClick={() => void handleSignOut()}
@@ -908,8 +1044,8 @@ export default function POSPage() {
                       </h2>
                     </div>
                     <span className="text-xs font-semibold text-[#6b7392]">
-                      {products.length}{" "}
-                      {products.length === 1 ? "item" : "items"}
+                      {visibleProducts.length}{" "}
+                      {visibleProducts.length === 1 ? "item" : "items"}
                     </span>
                   </div>
                   {productsError ? (
@@ -919,9 +1055,9 @@ export default function POSPage() {
                   ) : null}
                   {!productsLoaded ? (
                     <p className="py-8 text-sm text-neutral-500">Loading catalog...</p>
-                  ) : products.length > 0 ? (
+                  ) : visibleProducts.length > 0 ? (
                     <div className="grid max-h-[34rem] grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3 2xl:grid-cols-4">
-                      {products.map((product) => (
+                      {visibleProducts.map((product) => (
                         <button
                           key={product.id}
                           type="button"

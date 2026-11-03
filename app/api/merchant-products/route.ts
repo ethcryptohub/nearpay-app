@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import type { SignedMessage } from "@near-wallet-selector/core";
 import {
   isMerchantProduct,
   type MerchantProduct,
 } from "../../../lib/merchant-products";
 import { isValidNearAccountId } from "../../../lib/merchant-settings";
-import { consumeAndVerifyWalletChallenge } from "../../../lib/server-wallet-auth";
+import { getMerchantSessionAccountId } from "../../../lib/server-merchant-session";
 import {
   getSupabaseAdmin,
   getSupabaseOperationError,
@@ -37,22 +36,6 @@ function toMerchantProduct(row: MerchantProductRow): MerchantProduct {
     currency: row.currency,
     description: row.description,
     imageUrl: row.image_url,
-  };
-}
-
-function parseSignedMessage(value: unknown): SignedMessage | null {
-  if (
-    !isRecord(value) ||
-    typeof value.accountId !== "string" ||
-    typeof value.publicKey !== "string" ||
-    typeof value.signature !== "string"
-  ) {
-    return null;
-  }
-  return {
-    accountId: value.accountId,
-    publicKey: value.publicKey,
-    signature: value.signature,
   };
 }
 
@@ -103,13 +86,10 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body: unknown = await request.json();
-    const signedMessage = isRecord(body) ? parseSignedMessage(body.signedMessage) : null;
     if (
       !isRecord(body) ||
       typeof body.accountId !== "string" ||
       !isValidNearAccountId(body.accountId) ||
-      typeof body.challengeId !== "string" ||
-      !signedMessage ||
       (body.action !== "upsert" &&
         body.action !== "delete" &&
         body.action !== "import")
@@ -152,14 +132,12 @@ export async function POST(request: Request) {
       );
     }
 
-    await consumeAndVerifyWalletChallenge({
-      challengeId: body.challengeId,
-      accountId: body.accountId,
-      purpose: "merchant-catalog",
-      transactionHash: null,
-      receiptDigest: null,
-      signedMessage,
-    });
+    if (getMerchantSessionAccountId(request) !== body.accountId) {
+      return NextResponse.json(
+        { error: "Authorize this merchant wallet to manage its catalog." },
+        { status: 401 },
+      );
+    }
 
     const supabase = getSupabaseAdmin();
     if (body.action === "upsert") {

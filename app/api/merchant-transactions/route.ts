@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { JsonRpcProvider } from "near-api-js";
-import type { SignedMessage } from "@near-wallet-selector/core";
 import {
   formatInvoiceNumber,
   isReceiptItem,
@@ -8,9 +7,9 @@ import {
 } from "../../../lib/payment-history";
 import { isValidNearAccountId } from "../../../lib/merchant-settings";
 import {
-  consumeAndVerifyWalletChallenge,
   isTransactionHash,
 } from "../../../lib/server-wallet-auth";
+import { getMerchantSessionAccountId } from "../../../lib/server-merchant-session";
 import {
   getSupabaseAdmin,
   getSupabaseOperationError,
@@ -52,11 +51,6 @@ export async function POST(request: Request) {
       !isRecord(body) ||
       typeof body.accountId !== "string" ||
       !isValidNearAccountId(body.accountId) ||
-      typeof body.challengeId !== "string" ||
-      !isRecord(body.signedMessage) ||
-      typeof body.signedMessage.accountId !== "string" ||
-      typeof body.signedMessage.publicKey !== "string" ||
-      typeof body.signedMessage.signature !== "string" ||
       !isTransactionHash(body.transactionHash) ||
       typeof body.customerAddress !== "string" ||
       !isValidNearAccountId(body.customerAddress) ||
@@ -80,19 +74,12 @@ export async function POST(request: Request) {
       );
     }
 
-    const signedMessage: SignedMessage = {
-      accountId: body.signedMessage.accountId,
-      publicKey: body.signedMessage.publicKey,
-      signature: body.signedMessage.signature,
-    };
-    await consumeAndVerifyWalletChallenge({
-      challengeId: body.challengeId,
-      accountId: body.accountId,
-      purpose: "merchant-transaction",
-      transactionHash: null,
-      receiptDigest: null,
-      signedMessage,
-    });
+    if (getMerchantSessionAccountId(request) !== body.accountId) {
+      return NextResponse.json(
+        { error: "Authorize this merchant wallet to save verified transactions." },
+        { status: 401 },
+      );
+    }
 
     const outcome = await testnetProvider.viewTransactionStatus({
       txHash: body.transactionHash,

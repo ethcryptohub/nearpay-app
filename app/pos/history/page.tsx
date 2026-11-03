@@ -14,7 +14,10 @@ import {
 } from "../../../lib/merchant-settings";
 import { getWalletSelector } from "../../../lib/near-wallet-selector";
 import { loadMerchantSettings } from "../../../lib/merchant-data";
-import { signMerchantAuthorization } from "../../../lib/merchant-authorization";
+import {
+  getMerchantSession,
+  signMerchantAuthorization,
+} from "../../../lib/merchant-authorization";
 
 function readApiError(value: unknown, fallback: string): string {
   return typeof value === "object" &&
@@ -27,6 +30,9 @@ function readApiError(value: unknown, fallback: string): string {
 
 export default function HistoryPage() {
   const [transactions, setTransactions] = useState<PaymentRecord[]>([]);
+  const [transactionsAccountId, setTransactionsAccountId] = useState<
+    string | null
+  >(null);
   const [merchantAccountId, setMerchantAccountId] = useState(
     defaultMerchantSettings.merchantAccountId,
   );
@@ -42,6 +48,11 @@ export default function HistoryPage() {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [merchantSettingsLoaded, setMerchantSettingsLoaded] = useState(false);
   const [merchantSettingsAvailable, setMerchantSettingsAvailable] = useState(false);
+  const [merchantSessionAccountId, setMerchantSessionAccountId] = useState<
+    string | null
+  >(null);
+  const [isCheckingMerchantSession, setIsCheckingMerchantSession] =
+    useState(false);
   const syncAttemptRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -120,11 +131,13 @@ export default function HistoryPage() {
   useEffect(() => {
     if (!connectedAccountId) {
       setTransactions([]);
+      setTransactionsAccountId(null);
       return;
     }
-    if (connectedAccountId === merchantAccountId) return;
-    let active = true;
     setTransactions([]);
+    setTransactionsAccountId(null);
+    if (!merchantSettingsLoaded) return;
+    let active = true;
     void loadMerchantSettings(connectedAccountId)
       .then((settings) => {
         if (active) {
@@ -146,9 +159,54 @@ export default function HistoryPage() {
     return () => {
       active = false;
     };
-  }, [connectedAccountId, merchantAccountId]);
+  }, [connectedAccountId, merchantSettingsLoaded]);
 
-  const syncSharedHistory = useCallback(async () => {
+  useEffect(() => {
+    if (
+      !connectedAccountId ||
+      connectedAccountId !== merchantAccountId ||
+      !merchantSettingsLoaded ||
+      !merchantSettingsAvailable
+    ) {
+      return;
+    }
+
+    let active = true;
+    setIsCheckingMerchantSession(true);
+    void getMerchantSession(connectedAccountId)
+      .then((authenticated) => {
+        if (active) {
+          setMerchantSessionAccountId(
+            authenticated ? connectedAccountId : null,
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        console.error("Unable to check the merchant history session.", error);
+        if (active) {
+          setMerchantSessionAccountId(null);
+          setHistoryError(
+            error instanceof Error
+              ? error.message
+              : "Unable to check the merchant session.",
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setIsCheckingMerchantSession(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    connectedAccountId,
+    merchantAccountId,
+    merchantSettingsAvailable,
+    merchantSettingsLoaded,
+  ]);
+
+  const syncSharedHistory = useCallback(async (authorize = false) => {
     if (
       !selector ||
       !connectedAccountId ||
@@ -160,11 +218,16 @@ export default function HistoryPage() {
     setIsSyncing(true);
     setHistoryError(null);
     try {
-      const authorization = await signMerchantAuthorization(
-        selector,
-        connectedAccountId,
-        "merchant-history",
-      );
+      if (authorize) {
+        await signMerchantAuthorization(selector, connectedAccountId);
+      } else if (!(await getMerchantSession(connectedAccountId))) {
+        setMerchantSessionAccountId(null);
+        setHistoryError("Merchant session expired. Authorize the wallet to continue.");
+        return;
+      }
+      const authorization = { accountId: connectedAccountId };
+      setMerchantSessionAccountId(connectedAccountId);
+      syncAttemptRef.current = `${connectedAccountId}:${merchantAccountId}`;
 
       const historyResponse = await fetch("/api/merchant-history", {
         method: "POST",
@@ -191,6 +254,7 @@ export default function HistoryPage() {
         null;
       if (activeAccountId === connectedAccountId) {
         setTransactions(result.records);
+        setTransactionsAccountId(connectedAccountId);
       }
     } catch (error) {
       console.error("Unable to synchronize shared merchant history.", error);
@@ -214,7 +278,8 @@ export default function HistoryPage() {
       isInitializing ||
       !merchantSettingsLoaded ||
       !merchantSettingsAvailable ||
-      !selector
+      !selector ||
+      merchantSessionAccountId !== connectedAccountId
     ) {
       return;
     }
@@ -231,9 +296,16 @@ export default function HistoryPage() {
     merchantAccountId,
     merchantSettingsAvailable,
     merchantSettingsLoaded,
+    merchantSessionAccountId,
     selector,
     syncSharedHistory,
   ]);
+
+  const visibleTransactions =
+    connectedAccountId === merchantAccountId &&
+    transactionsAccountId === connectedAccountId
+      ? transactions
+      : [];
 
   return (
     <div className="flex min-h-screen flex-col bg-[#f4f4f1] font-sans text-black lg:flex-row">
@@ -259,7 +331,20 @@ export default function HistoryPage() {
               </span>
             ) : null}
             {connectedAccountId === merchantAccountId ? (
-              historyError ? (
+              merchantSessionAccountId !== connectedAccountId ? (
+                <button
+                  type="button"
+                  onClick={() => void syncSharedHistory(true)}
+                  disabled={isSyncing || isCheckingMerchantSession}
+                  className="border border-black px-4 py-2 text-xs font-bold uppercase tracking-wider transition hover:bg-black hover:text-white disabled:opacity-50"
+                >
+                  {isCheckingMerchantSession
+                    ? "Checking session..."
+                    : isSyncing
+                      ? "Authorizing..."
+                      : "Authorize & load history"}
+                </button>
+              ) : historyError ? (
                 <button
                   type="button"
                   onClick={() => void syncSharedHistory()}
@@ -320,7 +405,7 @@ export default function HistoryPage() {
               </tr>
             </thead>
             <tbody>
-              {transactions.map((transaction, index) => {
+              {visibleTransactions.map((transaction, index) => {
                 const token = transaction.token ?? "NEAR";
                 const tokenAmount =
                   transaction.tokenAmount ?? transaction.usdcAmount;
@@ -404,7 +489,7 @@ export default function HistoryPage() {
                   </tr>
                 );
               })}
-              {transactions.length === 0 && !historyError ? (
+              {visibleTransactions.length === 0 && !historyError ? (
                 <tr className="border-b border-neutral-200">
                   <td colSpan={9} className="px-4 py-8 text-center text-sm text-neutral-500">
                     {isSyncing

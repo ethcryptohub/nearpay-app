@@ -33,6 +33,10 @@ export function parseMerchantSettings(
     return {
       ...defaultMerchantSettings,
       merchantAccountId: fallbackMerchantAccountId,
+      storeName:
+        fallbackMerchantAccountId === defaultMerchantSettings.merchantAccountId
+          ? defaultMerchantSettings.storeName
+          : fallbackMerchantAccountId,
     };
   }
 

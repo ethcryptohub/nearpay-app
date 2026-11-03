@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import type { WalletSelector } from "@near-wallet-selector/core";
 import { setupModal, type WalletSelectorModal } from "@near-wallet-selector/modal-ui";
@@ -46,6 +46,7 @@ export default function MerchantSettingsPage() {
     defaultMerchantSettings,
   );
   const [products, setProducts] = useState<MerchantProduct[]>([]);
+  const [productsAccountId, setProductsAccountId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [productsLoaded, setProductsLoaded] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -73,25 +74,39 @@ export default function MerchantSettingsPage() {
   );
   const [isSavingProduct, setIsSavingProduct] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const productLoadRequest = useRef(0);
+  const settingsLoadRequest = useRef(0);
+
+  const catalogReady =
+    Boolean(connectedAccountId) &&
+    connectedAccountId === settings.merchantAccountId &&
+    productsAccountId === connectedAccountId &&
+    productsLoaded;
+  const visibleProducts = catalogReady ? products : [];
 
   async function loadSharedProducts(
     merchantAccountId: string,
     isActive: () => boolean = () => true,
   ) {
+    const requestId = ++productLoadRequest.current;
     if (isActive()) {
+      setProducts([]);
+      setProductsAccountId(null);
       setProductsLoaded(false);
       setProductError(null);
     }
 
     try {
       const savedProducts = await loadMerchantProducts(merchantAccountId);
-      if (isActive()) {
+      if (isActive() && requestId === productLoadRequest.current) {
         setProducts(savedProducts);
+        setProductsAccountId(merchantAccountId);
       }
     } catch (error) {
       console.error("Unable to load the shared merchant product catalog.", error);
-      if (isActive()) {
+      if (isActive() && requestId === productLoadRequest.current) {
         setProducts([]);
+        setProductsAccountId(merchantAccountId);
         setProductError(
           error instanceof Error
             ? error.message
@@ -99,12 +114,15 @@ export default function MerchantSettingsPage() {
         );
       }
     } finally {
-      if (isActive()) setProductsLoaded(true);
+      if (isActive() && requestId === productLoadRequest.current) {
+        setProductsLoaded(true);
+      }
     }
   }
 
   useEffect(() => {
     let active = true;
+    const requestId = ++settingsLoadRequest.current;
 
     async function loadSettingsAndProducts() {
       await Promise.resolve();
@@ -112,13 +130,13 @@ export default function MerchantSettingsPage() {
       try {
         const savedSettings = await loadMerchantSettings(merchantAccountId);
         merchantAccountId = savedSettings.merchantAccountId;
-        if (active) {
+        if (active && requestId === settingsLoadRequest.current) {
           setSettings(savedSettings);
           setProductCurrency(savedSettings.fiatCurrency);
         }
       } catch (error) {
         console.error("Unable to load merchant settings.", error);
-        if (active) {
+        if (active && requestId === settingsLoadRequest.current) {
           setSettingsError(
             error instanceof Error
               ? error.message
@@ -127,8 +145,9 @@ export default function MerchantSettingsPage() {
         }
       }
 
+      if (!active || requestId !== settingsLoadRequest.current) return;
       await loadSharedProducts(merchantAccountId, () => active);
-      if (active) {
+      if (active && requestId === settingsLoadRequest.current) {
         setIsLoading(false);
       }
     }
@@ -140,25 +159,29 @@ export default function MerchantSettingsPage() {
   }, []);
 
   useEffect(() => {
-    if (!connectedAccountId || connectedAccountId === settings.merchantAccountId) {
-      return;
-    }
+    if (!connectedAccountId) return;
 
     const connectedMerchantId = connectedAccountId;
     let active = true;
+    const requestId = ++settingsLoadRequest.current;
+    setProducts([]);
+    setProductsAccountId(null);
+    setProductsLoaded(false);
+    setProductError(null);
     async function loadConnectedMerchant() {
       setIsLoading(true);
       setSettingsError(null);
       try {
         const savedSettings = await loadMerchantSettings(connectedMerchantId);
-        if (active) {
+        if (active && requestId === settingsLoadRequest.current) {
           setSettings(savedSettings);
           setProductCurrency(savedSettings.fiatCurrency);
         }
+        if (!active || requestId !== settingsLoadRequest.current) return;
         await loadSharedProducts(connectedMerchantId, () => active);
       } catch (error) {
         console.error("Unable to load settings for the connected merchant.", error);
-        if (active) {
+        if (active && requestId === settingsLoadRequest.current) {
           setSettingsError(
             error instanceof Error
               ? error.message
@@ -166,14 +189,16 @@ export default function MerchantSettingsPage() {
           );
         }
       } finally {
-        if (active) setIsLoading(false);
+        if (active && requestId === settingsLoadRequest.current) {
+          setIsLoading(false);
+        }
       }
     }
     void loadConnectedMerchant();
     return () => {
       active = false;
     };
-  }, [connectedAccountId, settings.merchantAccountId]);
+  }, [connectedAccountId]);
 
   useEffect(() => {
     let active = true;
@@ -283,7 +308,6 @@ export default function MerchantSettingsPage() {
       const authorization = await signMerchantAuthorization(
         walletSelector,
         connectedAccountId,
-        "merchant-settings",
       );
       const response = await fetch("/api/merchant-settings", {
         method: "POST",
@@ -387,9 +411,9 @@ export default function MerchantSettingsPage() {
       | { action: "delete"; productId: string }
       | { action: "import"; products: MerchantProduct[] },
   ): Promise<boolean> {
-    if (!walletSelector || connectedAccountId !== settings.merchantAccountId) {
+    if (!walletSelector || !connectedAccountId || !catalogReady) {
       setProductError(
-        "Connect the configured merchant NEAR wallet to authorize this catalog change.",
+        "Connect the configured merchant wallet and finish loading its catalog before changing products.",
       );
       walletModal?.show();
       return false;
@@ -402,7 +426,6 @@ export default function MerchantSettingsPage() {
       const authorization = await signMerchantAuthorization(
         walletSelector,
         connectedAccountId,
-        "merchant-catalog",
       );
 
       const response = await fetch("/api/merchant-products", {
@@ -428,17 +451,14 @@ export default function MerchantSettingsPage() {
       }
 
       setProducts(parseMerchantProducts(result.products));
-      if (mutation.action === "import") {
-        setProductMessage(
-          `Imported ${mutation.products.length} product(s) into the shared Supabase catalog.`,
-        );
-      } else {
-        setProductMessage(
-          mutation.action === "delete"
+      setProductsAccountId(connectedAccountId);
+      setProductMessage(
+        mutation.action === "import"
+          ? `Imported ${mutation.products.length} sample product(s) into your catalog.`
+          : mutation.action === "delete"
             ? "Product deleted from the shared Supabase catalog."
             : "Product saved to the shared Supabase catalog.",
-        );
-      }
+      );
       return true;
     } catch (error) {
       console.error("Unable to update the shared merchant product catalog.", error);
@@ -789,12 +809,12 @@ export default function MerchantSettingsPage() {
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-xs font-semibold uppercase tracking-widest text-neutral-500">
-                  {products.length}{" "}
-                  {products.length === 1 ? "product" : "products"}
+                  {visibleProducts.length}{" "}
+                  {visibleProducts.length === 1 ? "product" : "products"}
                 </span>
                 {connectedAccountId === settings.merchantAccountId ? (
                   <span className="border border-emerald-700 px-3 py-2 text-xs font-bold text-emerald-800">
-                    WALLET AUTHORIZED
+                    {catalogReady ? "CATALOG READY" : "LOADING CATALOG"}
                   </span>
                 ) : (
                   <button
@@ -809,11 +829,25 @@ export default function MerchantSettingsPage() {
               </div>
             </div>
 
-            {products.length === 0 ? (
+            {!catalogReady ? (
+              <p className="mt-5 border border-neutral-300 p-4 text-sm leading-6 text-neutral-600">
+                Connect the merchant wallet to load its private catalog. Each
+                wallet only sees products saved under its own account.
+              </p>
+            ) : null}
+            {settingsError ? (
+              <p
+                role="alert"
+                className="mt-5 border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800"
+              >
+                {settingsError}
+              </p>
+            ) : null}
+            {catalogReady && visibleProducts.length === 0 ? (
               <div className="mt-5 flex flex-wrap items-center justify-between gap-4 border border-neutral-300 p-4">
                 <p className="text-sm leading-6 text-neutral-600">
-                  Start with 12 sample Indian restaurant products, then edit
-                  them any time.
+                  Your catalog is empty. Add products individually, or import
+                  the optional Indian restaurant sample menu.
                 </p>
                 <button
                   type="button"
@@ -823,14 +857,10 @@ export default function MerchantSettingsPage() {
                       products: restaurantSampleProducts,
                     })
                   }
-                  disabled={
-                    !productsLoaded ||
-                    isSavingProduct ||
-                    connectedAccountId !== settings.merchantAccountId
-                  }
+                  disabled={isSavingProduct}
                   className="bg-black px-4 py-3 text-xs font-bold uppercase tracking-widest text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {isSavingProduct ? "Saving..." : "Add 12 Sample Products"}
+                  {isSavingProduct ? "Saving..." : "Import Sample Menu"}
                 </button>
               </div>
             ) : null}
@@ -862,7 +892,7 @@ export default function MerchantSettingsPage() {
                     required
                     value={productName}
                     onChange={(event) => setProductName(event.target.value)}
-                    disabled={!productsLoaded || isSavingProduct}
+                    disabled={!catalogReady || isSavingProduct}
                     placeholder="Product name"
                     className={fieldClassName}
                   />
@@ -883,7 +913,7 @@ export default function MerchantSettingsPage() {
                         ) ?? "Other",
                       );
                     }}
-                    disabled={!productsLoaded || isSavingProduct}
+                    disabled={!catalogReady || isSavingProduct}
                     className={fieldClassName}
                   >
                     {merchantProductCategories.map((category) => (
@@ -907,7 +937,7 @@ export default function MerchantSettingsPage() {
                           event.target.value === "USD" ? "USD" : "INR",
                         )
                       }
-                      disabled={!productsLoaded || isSavingProduct}
+                      disabled={!catalogReady || isSavingProduct}
                       className="border border-neutral-300 bg-neutral-50 px-3 text-sm font-bold outline-none focus:border-black"
                     >
                       <option value="INR">INR</option>
@@ -921,7 +951,7 @@ export default function MerchantSettingsPage() {
                       required
                       value={productPrice}
                       onChange={(event) => setProductPrice(event.target.value)}
-                      disabled={!productsLoaded || isSavingProduct}
+                      disabled={!catalogReady || isSavingProduct}
                       placeholder="0.00"
                       className={`${fieldClassName} mt-0`}
                     />
@@ -940,7 +970,7 @@ export default function MerchantSettingsPage() {
                     onChange={(event) =>
                       setProductDescription(event.target.value)
                     }
-                    disabled={!productsLoaded || isSavingProduct}
+                    disabled={!catalogReady || isSavingProduct}
                     placeholder="A short product description"
                     className={`${fieldClassName} resize-y`}
                   />
@@ -966,7 +996,7 @@ export default function MerchantSettingsPage() {
                       onChange={(event) =>
                         setProductImageUrl(event.target.value)
                       }
-                      disabled={!productsLoaded || isSavingProduct}
+                      disabled={!catalogReady || isSavingProduct}
                       placeholder="https://example.com/product-image.jpg"
                       className={fieldClassName}
                     />
@@ -986,7 +1016,7 @@ export default function MerchantSettingsPage() {
                       onChange={(event) =>
                         void handleProductImageUpload(event)
                       }
-                      disabled={!productsLoaded || isSavingProduct}
+                      disabled={!catalogReady || isSavingProduct}
                       className={`${fieldClassName} file:mr-4 file:border-0 file:bg-black file:px-3 file:py-2 file:text-xs file:font-bold file:uppercase file:text-white`}
                     />
                   </label>
@@ -1033,7 +1063,7 @@ export default function MerchantSettingsPage() {
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
                   type="submit"
-                  disabled={!productsLoaded || isSavingProduct}
+                  disabled={!catalogReady || isSavingProduct}
                   className="inline-flex items-center justify-center gap-2 bg-black px-6 py-3 text-sm font-bold uppercase tracking-widest text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {editingProductId ? (
@@ -1061,9 +1091,9 @@ export default function MerchantSettingsPage() {
             </form>
 
             <div className="mt-6">
-              {products.length > 0 ? (
+              {visibleProducts.length > 0 ? (
                 <div className="grid gap-3 md:grid-cols-2">
-                  {products.map((product) => (
+                  {visibleProducts.map((product) => (
                     <article
                       key={product.id}
                       className="flex min-w-0 items-start justify-between gap-4 border border-neutral-200 p-4"
@@ -1111,7 +1141,7 @@ export default function MerchantSettingsPage() {
                     </article>
                   ))}
                 </div>
-              ) : productsLoaded ? (
+              ) : catalogReady ? (
                 <p className="border border-dashed border-neutral-300 px-4 py-8 text-center text-sm text-neutral-500">
                   No products yet. Add your first product above.
                 </p>

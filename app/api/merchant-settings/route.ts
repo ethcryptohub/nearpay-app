@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import type { SignedMessage } from "@near-wallet-selector/core";
 import { isValidNearAccountId } from "../../../lib/merchant-settings";
-import { consumeAndVerifyWalletChallenge } from "../../../lib/server-wallet-auth";
+import { getMerchantSessionAccountId } from "../../../lib/server-merchant-session";
 import {
   getSupabaseAdmin,
   getSupabaseOperationError,
@@ -60,16 +59,18 @@ export async function POST(request: Request) {
       !isRecord(body) ||
       typeof body.accountId !== "string" ||
       !isValidNearAccountId(body.accountId) ||
-      typeof body.challengeId !== "string" ||
-      !isRecord(body.signedMessage) ||
-      typeof body.signedMessage.accountId !== "string" ||
-      typeof body.signedMessage.publicKey !== "string" ||
-      typeof body.signedMessage.signature !== "string" ||
       !isRecord(body.settings)
     ) {
       return NextResponse.json(
         { error: "Invalid merchant settings authorization." },
         { status: 400 },
+      );
+    }
+
+    if (getMerchantSessionAccountId(request) !== body.accountId) {
+      return NextResponse.json(
+        { error: "Authorize this merchant wallet to update its settings." },
+        { status: 401 },
       );
     }
 
@@ -95,20 +96,6 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-
-    const signedMessage: SignedMessage = {
-      accountId: body.signedMessage.accountId,
-      publicKey: body.signedMessage.publicKey,
-      signature: body.signedMessage.signature,
-    };
-    await consumeAndVerifyWalletChallenge({
-      challengeId: body.challengeId,
-      accountId: body.accountId,
-      purpose: "merchant-settings",
-      transactionHash: null,
-      receiptDigest: null,
-      signedMessage,
-    });
 
     const { data, error } = await getSupabaseAdmin()
       .from("settings")
